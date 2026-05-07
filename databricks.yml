@@ -74,6 +74,7 @@ resources:
             notebook_path: notebooks/04_export_sharepoint.py
             base_parameters:
               catalog: ${var.catalog}
+              volume_input: ${var.volume_input}
               volume_output: ${var.volume_output}
           environment_key: default
 

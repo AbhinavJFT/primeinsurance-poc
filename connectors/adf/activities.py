@@ -294,6 +294,9 @@ def execute_script(activity: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
     if handler == "register_workbook_manifest":
         return _register_workbook_manifest(activity, ctx)
 
+    if handler == "build_same_format_xlsx":
+        return _build_same_format_xlsx(activity, ctx)
+
     raise NotImplementedError(
         f"Script activity {activity['name']!r} has no _mock.handler this runner understands"
     )
@@ -333,6 +336,88 @@ def _register_workbook_manifest(activity: dict[str, Any], ctx: RunContext) -> di
     }
     ctx.activity_outputs.setdefault("_manifest_buffer", []).append(row)
     return {"buffered": True, "workbook": name}
+
+
+def _build_same_format_xlsx(activity: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
+    """Build a cleaned xlsx that mirrors the input shape and upload it to a
+    subfolder under SharePoint /output (default: ``cleaned``).
+
+    Reads:
+      * the original input xlsx via SharePointBackend (input volume)
+      * silver.observations_long + silver.column_mapping_log via DeltaBackend
+
+    Writes:
+      * a same-shape xlsx into <output volume>/<subfolder>/<workbook>.
+    """
+    from quality_core.inplace_cleaner import build_same_format_xlsx
+
+    item = ctx.item or {}
+    workbook_name = item.get("workbook")
+    if not workbook_name:
+        raise ValueError("build_same_format_xlsx requires ctx.item['workbook']")
+
+    mock = activity.get("_mock") or {}
+    input_folder = mock.get("inputFolder", "input")
+    output_folder = mock.get("outputFolder", "output")
+    subfolder = ctx.pipeline_parameters.get("subfolder") or mock.get("outputSubfolder", "cleaned")
+
+    catalog = ctx.pipeline_parameters.get("catalog", "quality_de")
+
+    # Resolve both backends from the linked services in the run context.
+    sp_ls = next(
+        ls for ls in ctx.linked_services.values()
+        if ls["properties"]["type"] == "SharePointOnlineList"
+    )
+    db_ls = next(
+        ls for ls in ctx.linked_services.values()
+        if ls["properties"]["type"] == "AzureDatabricksDeltaLake"
+    )
+    sp_backend = resolve_backend(sp_ls)
+    db_backend = resolve_backend(db_ls, spark=ctx.spark)
+    if not isinstance(db_backend, DeltaBackend):
+        raise RuntimeError("DeltaBackend resolution failed")
+
+    obs_headers, obs_rows = db_backend.fetch_for_workbook(
+        f"silver.observations_long", workbook_name,
+    )
+    map_headers, map_rows = db_backend.fetch_for_workbook(
+        f"silver.column_mapping_log", workbook_name,
+    )
+
+    # Stage the input + output xlsx in a tmp dir; then upload the cleaned
+    # file to SharePoint /output/<subfolder>/.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        input_staged = tmp_path / workbook_name
+        input_staged.write_bytes(sp_backend.read_bytes(input_folder, workbook_name))
+        output_staged = tmp_path / "cleaned" / workbook_name
+        output_staged.parent.mkdir(parents=True, exist_ok=True)
+
+        build_same_format_xlsx(
+            input_path=input_staged,
+            obs_headers=obs_headers,
+            obs_rows=obs_rows,
+            map_headers=map_headers,
+            map_rows=map_rows,
+            output_path=output_staged,
+        )
+
+        # Upload via SharePointMock.upload_file with name="cleaned/<file>"
+        # so the subfolder is created on the fly.
+        result = sp_backend.upload_file(
+            output_folder, output_staged, name=f"{subfolder}/{workbook_name}",
+        )
+
+    ctx.emit(
+        f"  [Script:same_format] {workbook_name} → {result['path']}  "
+        f"({result['size']:,} bytes; {len(obs_rows)} obs rows)"
+    )
+    return {
+        "rowsCopied": len(obs_rows),
+        "bytesWritten": result["size"],
+        "source": workbook_name,
+        "sink": result["path"],
+    }
 
 
 # ---------------------------------------------------------------------------

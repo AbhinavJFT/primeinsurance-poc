@@ -72,6 +72,7 @@ obs_rows = [
      "sample_form": o.sample_form, "appearance": o.appearance,
      "appearance_solution": o.appearance_solution,
      "analyte": o.analyte, "analyte_canonical": o.analyte_canonical,
+     "column_index": o.column_index,
      "rt": o.rt, "rrt": o.rrt, "value": o.value, "unit": o.unit,
      "spec_min": o.spec_min, "spec_max": o.spec_max,
      "spec_internal_min": o.spec_internal_min, "spec_internal_max": o.spec_internal_max,

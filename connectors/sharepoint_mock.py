@@ -83,6 +83,8 @@ class SharePointMock:
             raise FileNotFoundError(f"Local file not found: {src_path}")
         dest_dir = self._resolve(folder)
         target = dest_dir / (name or src_path.name)
+        # Allow `name` to include a subfolder (e.g. "cleaned/foo.xlsx").
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_path, target)
         return SharePointFile(
             name=target.name,

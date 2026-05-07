@@ -1,0 +1,66 @@
+{
+  "name": "pl_export_clean_to_sp",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "annotations": [
+      "Same-format export: rebuild each input workbook with cleaned cell values, preserving the original layout (7 batch tabs, 11-row header band, merged cells). Output lands in SharePoint /output/cleaned/.",
+      "Runs alongside pl_export_gold_to_sp — that pipeline produces the long-form tidy view; this one produces the input-shaped view for end users who want the familiar Excel template."
+    ],
+    "parameters": {
+      "catalog": { "type": "String", "defaultValue": "quality_de" },
+      "site":    { "type": "String", "defaultValue": "QualityTeam" },
+      "subfolder": { "type": "String", "defaultValue": "cleaned" }
+    },
+    "activities": [
+      {
+        "name": "LookupDistinctWorkbooks",
+        "type": "Lookup",
+        "dependsOn": [],
+        "typeProperties": {
+          "source": {
+            "type": "AzureDatabricksDeltaLakeSource",
+            "query": "SELECT DISTINCT workbook FROM @{pipeline().parameters.catalog}.gold.fact_observation"
+          },
+          "dataset": {
+            "referenceName": "ds_gold_observation",
+            "type": "DatasetReference",
+            "parameters": { "workbook": "" }
+          },
+          "firstRowOnly": false
+        }
+      },
+      {
+        "name": "ForEachWorkbook",
+        "type": "ForEach",
+        "dependsOn": [
+          { "activity": "LookupDistinctWorkbooks", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "items": { "value": "@activity('LookupDistinctWorkbooks').output.value", "type": "Expression" },
+          "isSequential": true,
+          "activities": [
+            {
+              "name": "BuildSameFormatXlsx",
+              "type": "Script",
+              "typeProperties": {
+                "scriptBlockExecutionTimeout": "00:05:00",
+                "scripts": [
+                  {
+                    "type": "Query",
+                    "text": "-- Mock-only Script: rebuilds <workbook> with cleaned values and uploads to SharePoint /output/<subfolder>/."
+                  }
+                ]
+              },
+              "_mock": {
+                "handler": "build_same_format_xlsx",
+                "inputFolder": "input",
+                "outputFolder": "output",
+                "note": "Reads input xlsx from SharePoint /input + cleaned values from silver.observations_long + silver.column_mapping_log; writes a same-shape xlsx to SharePoint /output/<subfolder>/. The subfolder name comes from pipeline().parameters.subfolder. Real ADF would chain a Databricks notebook activity instead of a Script."
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

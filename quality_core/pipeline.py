@@ -131,6 +131,7 @@ def _process_quality_sheet(ws, profile: SheetProfile, mappings: list[ColumnMappi
                                      else None),
                 analyte=imp.raw_label,
                 analyte_canonical=mapping.canonical,
+                column_index=imp.column_index,
                 rt=imp.rt,
                 rrt=imp.rrt,
                 value=value,

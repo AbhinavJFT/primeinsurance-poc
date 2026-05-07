@@ -92,6 +92,7 @@ class Observation:
     appearance_solution: Optional[str]
     analyte: str
     analyte_canonical: Optional[str]
+    column_index: Optional[int]   # 1-based source column; disambiguates duplicate canonical names
     rt: Optional[float]
     rrt: Optional[float]
     value: Optional[float]
