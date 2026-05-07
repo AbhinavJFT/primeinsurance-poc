@@ -1,0 +1,52 @@
+# Canonical tidy schema for Quality team observations.
+# Wide multi-header sheets are mapped into this long-form schema by quality_core.
+
+observation:
+  primary_key: [workbook, sheet, row_seq, analyte]
+  columns:
+    workbook:           { type: string,    desc: "Source xlsx filename" }
+    sheet:              { type: string,    desc: "Source sheet name (preserves batch tag)" }
+    row_seq:            { type: int,       desc: "Original row sequence number from source" }
+    sample_date:        { type: date,      desc: "Date of sampling" }
+    sample_time:        { type: time,      desc: "Time of sampling" }
+    report_time:        { type: time,      desc: "Time of reporting" }
+    batch_no:           { type: string,    desc: "Batch identifier, e.g. #712" }
+    instrument_id:      { type: string,    desc: "e.g. HPLC-02/KF-12" }
+    stage:              { type: string,    desc: "e.g. Reprocess, After Wash, Crystallization" }
+    sample_form:        { type: string,    desc: "Solid, Liquid, etc." }
+    appearance:         { type: string,    desc: "White Powder, Off-white solid, etc." }
+    appearance_solution: { type: string,   desc: "Pass/fail of 30% solution-in-methanol clarity check" }
+    analyte:            { type: string,    desc: "Canonical analyte name (Impurity_1, TFMBA, ...)" }
+    rt:                 { type: float,     desc: "Retention Time" }
+    rrt:                { type: float,     desc: "Relative Retention Time" }
+    value:              { type: float,     desc: "Measured value (% v/v)" }
+    unit:               { type: string,    desc: "Reported unit (typically % v/v)" }
+    spec_min:           { type: float,     desc: "Specification minimum (null if Max-only)" }
+    spec_max:           { type: float,     desc: "Specification maximum (null if Min-only)" }
+    spec_internal_min:  { type: float,     desc: "Internal SRF specification minimum" }
+    spec_internal_max:  { type: float,     desc: "Internal SRF specification maximum" }
+    pass:               { type: bool,      desc: "Did this observation meet specification?" }
+    raw_value:          { type: string,    desc: "Original cell value before coercion (audit)" }
+
+# Synonyms used for fuzzy column-name matching in the absence of an LLM.
+# The LLM mapper will refine and add confidence scores.
+synonyms:
+  sample_date:        ["date of sampling", "sampling date", "date sampled", "samp date"]
+  sample_time:        ["time of sampling", "sample time", "samp time"]
+  report_time:        ["time of reporting", "report time", "reported at"]
+  batch_no:           ["batch no", "batch no.", "batch number", "batch #", "batch"]
+  instrument_id:      ["instrument id", "instrument", "instr id", "hplc id"]
+  stage:              ["stage", "process stage", "step"]
+  sample_form:        ["sample characteristic", "sample characteristics", "sample form", "form"]
+  appearance:         ["appearance"]
+  appearance_solution: ["appearance of 30% solution in methanol", "30% solution clarity", "methanol clarity"]
+
+# Known analytes (canonical names + aliases) for the impurity columns.
+analytes:
+  Impurity_1:         ["impurity-1", "impurity 1", "imp-1", "imp 1"]
+  Impurity_2:         ["impurity-2", "impurity 2", "imp-2"]
+  Impurity_generic:   ["impurity"]
+  TFMBA:              ["tfmba"]
+  TFMBA_Acid:         ["tfmba acid", "tfmba-acid"]
+  Chloro_Benzamide_2: ["2-chloro benzamide", "2 chloro benzamide", "2-chlorobenzamide"]
+  Chloro_TFMBA_5:     ["5-chloro tfmba", "5 chloro tfmba", "5-chlorotfmba"]
