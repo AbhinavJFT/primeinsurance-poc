@@ -1,0 +1,57 @@
+# Databricks App definition for the Quality Team Intelligence demo dashboard.
+#
+# Deploy with:
+#   databricks apps deploy quality-team-intelligence \
+#     --source-code-path /Workspace/Users/<you>/.bundle/quality_de/dev/files/apps/quality_team_intelligence \
+#     -p newaccount
+#
+# Or wire into databricks.yml as a `resources.apps` entry to deploy alongside
+# the bundle.
+
+command:
+  - "streamlit"
+  - "run"
+  - "app.py"
+  - "--server.port=8000"
+  - "--server.address=0.0.0.0"
+  - "--server.enableCORS=false"
+  - "--server.enableXsrfProtection=false"
+
+env:
+  - name: QDE_CATALOG
+    value: "quality_de"
+  - name: QDE_VOLUME_INPUT
+    value: "sharepoint_input"
+  - name: QDE_VOLUME_OUTPUT
+    value: "sharepoint_output"
+  - name: QDE_JOB_NAME_HINT
+    value: "quality_de"
+  - name: STREAMLIT_SERVER_HEADLESS
+    value: "true"
+  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+    value: "false"
+
+resources:
+  - name: warehouse
+    description: |
+      SQL warehouse used to query bronze/silver/gold tables. The app's
+      executing identity (the user who opened the app, or a configured
+      service principal) needs CAN_USE on this warehouse and SELECT on
+      quality_de.{bronze,silver,gold}.*.
+    sql_warehouse:
+      id: "2de6a251cf2870eb"
+      permission: "CAN_USE"
+
+  - name: bronze_volume
+    description: "Read access to the SharePoint /input mock volume."
+    uc_securable:
+      securable_full_name: "quality_de.bronze.sharepoint_input"
+      securable_type: "VOLUME"
+      permission: "READ_VOLUME"
+
+  - name: output_volume
+    description: "Read access to the SharePoint /output mock volume."
+    uc_securable:
+      securable_full_name: "quality_de.bronze.sharepoint_output"
+      securable_type: "VOLUME"
+      permission: "READ_VOLUME"
