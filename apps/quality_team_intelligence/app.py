@@ -66,9 +66,12 @@ VOLUME_OUTPUT = os.environ.get("QDE_VOLUME_OUTPUT", "sharepoint_output")
 WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "2de6a251cf2870eb")
 JOB_NAME_HINT = os.environ.get("QDE_JOB_NAME_HINT", "quality_de")
 
-OUTPUT_VOLUME = Path(f"/Volumes/{CATALOG}/bronze/{VOLUME_OUTPUT}")
-RUNS_DIR = OUTPUT_VOLUME / "_app_runs"
-WORKING_DIR = OUTPUT_VOLUME / "_app_working"
+# State storage. Databricks Apps don't FUSE-mount UC Volumes — volume access
+# requires the Files API, which would mean refactoring all our pandas reads
+# and writes. /tmp lives inside the app container, survives within a single
+# app session, and is wiped on container restart. That's fine for a demo.
+RUNS_DIR = Path(os.environ.get("QDE_RUNS_DIR", "/tmp/qde_runs"))
+WORKING_DIR = Path(os.environ.get("QDE_WORKING_DIR", "/tmp/qde_working"))
 
 # Visual constants
 PRIMARY = "#2563EB"
@@ -92,8 +95,8 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .block-container { padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1400px; }
-        h1 { padding-top: 0; font-size: 2.0rem; }
+        .block-container { padding-top: 3.5rem; padding-bottom: 2rem; max-width: 1400px; }
+        h1 { font-size: 2.0rem; line-height: 1.25; margin-top: 0.2rem; }
         h2 { font-size: 1.4rem; margin-top: 0.5rem; }
         h3 { font-size: 1.1rem; opacity: 0.85; }
 
@@ -1267,7 +1270,7 @@ st.markdown(
     f"""
     <div class='footer-note'>
        <strong>Quality Team Intelligence</strong> · catalog <code>{CATALOG}</code> ·
-       runs persisted to <code>{RUNS_DIR}</code> ·
+       runs cached at <code>{RUNS_DIR}</code> (per-session) ·
        <a href='https://github.com/AbhinavJFT/primeinsurance-poc' target='_blank'>repo</a>
     </div>
     """,
