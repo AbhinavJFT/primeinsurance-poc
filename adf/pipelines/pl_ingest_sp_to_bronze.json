@@ -1,0 +1,92 @@
+{
+  "name": "pl_ingest_sp_to_bronze",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "annotations": [
+      "Ingest: SharePoint /input → bronze raw landing volume + bronze.raw_workbooks manifest.",
+      "Replaces the body of notebooks/01_bronze_sharepoint_ingest.py."
+    ],
+    "parameters": {
+      "catalog": { "type": "String", "defaultValue": "quality_de" },
+      "volume":  { "type": "String", "defaultValue": "sharepoint_input" },
+      "site":    { "type": "String", "defaultValue": "QualityTeam" }
+    },
+    "activities": [
+      {
+        "name": "ListSharePointFiles",
+        "type": "GetMetadata",
+        "dependsOn": [],
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "ds_sp_xlsx_input",
+            "type": "DatasetReference",
+            "parameters": { "fileName": "" }
+          },
+          "fieldList": ["childItems"],
+          "filter": { "extension": ".xlsx" }
+        }
+      },
+      {
+        "name": "ForEachWorkbook",
+        "type": "ForEach",
+        "dependsOn": [
+          { "activity": "ListSharePointFiles", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "items": { "value": "@activity('ListSharePointFiles').output.childItems", "type": "Expression" },
+          "isSequential": true,
+          "activities": [
+            {
+              "name": "CopyToBronze",
+              "type": "Copy",
+              "typeProperties": {
+                "source": { "type": "BinarySource", "storeSettings": { "type": "HttpReadSettings" } },
+                "sink":   { "type": "BinarySink",   "storeSettings": { "type": "AzureBlobFSWriteSettings" } }
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_sp_xlsx_input",
+                  "type": "DatasetReference",
+                  "parameters": { "fileName": "@item().name" }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_uc_volume_bronze",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "fileName": "@item().name",
+                    "volume":   "@pipeline().parameters.volume"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RegisterManifest",
+              "type": "Script",
+              "dependsOn": [
+                { "activity": "CopyToBronze", "dependencyConditions": ["Succeeded"] }
+              ],
+              "linkedServiceName": {
+                "referenceName": "ls_databricks_delta",
+                "type": "LinkedServiceReference"
+              },
+              "typeProperties": {
+                "scripts": [
+                  {
+                    "type": "Query",
+                    "text": "_mock_register_workbook_manifest(@item().name, @pipeline().parameters.catalog, @pipeline().parameters.volume)"
+                  }
+                ]
+              },
+              "_mock": {
+                "handler": "register_workbook_manifest",
+                "note": "Real ADF would run a SQL stored proc. The mock runner intercepts this Script activity and writes to bronze.raw_workbooks (Delta on Databricks; JSON manifest locally)."
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

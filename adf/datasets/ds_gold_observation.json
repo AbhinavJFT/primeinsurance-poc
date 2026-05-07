@@ -1,0 +1,30 @@
+{
+  "name": "ds_gold_observation",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "AzureDatabricksDeltaLakeDataset",
+    "linkedServiceName": {
+      "referenceName": "ls_databricks_delta",
+      "type": "LinkedServiceReference"
+    },
+    "annotations": [
+      "Curated star-schema fact populated by the silver/gold notebooks.",
+      "Used as the source for the export pipeline."
+    ],
+    "parameters": {
+      "workbook": { "type": "String", "defaultValue": "" }
+    },
+    "typeProperties": {
+      "database": "gold",
+      "table": "fact_observation"
+    },
+    "_mock": {
+      "companions": {
+        "dq_issues":          { "database": "silver", "table": "dq_issues" },
+        "column_mapping_log": { "database": "silver", "table": "column_mapping_log" }
+      },
+      "localCsvDir": "data/gold_local",
+      "note": "The export Copy emits 3 sheets per workbook (observations, dq_issues, column_mapping_log). Companions are listed here so the runner knows which extra tables to read."
+    }
+  }
+}

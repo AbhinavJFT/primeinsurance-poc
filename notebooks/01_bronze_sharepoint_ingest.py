@@ -1,11 +1,20 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 01 — Bronze: SharePoint ingest
+# MAGIC # 01 — Bronze: SharePoint ingest (ADF mock)
 # MAGIC
-# MAGIC Lists files in the mock SharePoint /input folder (a UC Volume on
-# MAGIC Databricks; a local folder during dev) and registers each workbook in
-# MAGIC `bronze.raw_workbooks`. Files themselves stay in the Volume — the
-# MAGIC bronze table is metadata only.
+# MAGIC Thin orchestrator over the self-contained ADF runner. Reads the pipeline
+# MAGIC definition from `adf/pipelines/pl_ingest_sp_to_bronze.json` and executes
+# MAGIC the activities (GetMetadata → ForEach[Copy + Script]) against the
+# MAGIC SharePoint mock and a UC Volume.
+# MAGIC
+# MAGIC End state, identical to the previous hand-rolled notebook:
+# MAGIC * source `.xlsx` files copied into `/Volumes/{catalog}/bronze/{volume}/`
+# MAGIC * one row per file in `bronze.raw_workbooks` (Delta)
+# MAGIC
+# MAGIC The ADF JSON shape is what the customer would deploy in production —
+# MAGIC swap the `_mock` block on `ls_sharepoint_online` for a real Microsoft
+# MAGIC Graph linked service and the runner can be replaced with the ADF
+# MAGIC runtime without touching the pipeline / dataset definitions.
 
 # COMMAND ----------
 
@@ -16,40 +25,23 @@ VOL_IN = dbutils.widgets.get("volume_input")
 
 # COMMAND ----------
 
+import os
 import sys
 sys.path.insert(0, "../")
 
-from datetime import datetime
-from pathlib import Path
-from openpyxl import load_workbook
+# Bind the SharePointMock root to the UC Volume tree on Databricks; the
+# dataset folderPath "input" is then aliased to the actual volume name.
+os.environ["SHAREPOINT_MOCK_ROOT"] = f"/Volumes/{CATALOG}/bronze"
+os.environ["SHAREPOINT_FOLDER_ALIAS_input"] = VOL_IN
 
-INPUT_PATH = Path(f"/Volumes/{CATALOG}/bronze/{VOL_IN}")
-print(f"reading workbooks from {INPUT_PATH}")
+from connectors.adf import run_pipeline
 
-# COMMAND ----------
-
-rows = []
-for p in sorted(INPUT_PATH.glob("*.xlsx")):
-    wb = load_workbook(p, read_only=True, data_only=True)
-    rows.append({
-        "workbook": p.name,
-        "source_path": str(p),
-        "sheet_count": len(wb.sheetnames),
-        "sheet_names": wb.sheetnames,
-        "size_bytes": p.stat().st_size,
-        "ingest_ts": datetime.utcnow(),
-    })
-    wb.close()
-    print(f"  {p.name:<48} sheets={len(wb.sheetnames)}")
+result = run_pipeline(
+    "pl_ingest_sp_to_bronze",
+    parameters={"catalog": CATALOG, "volume": VOL_IN, "site": "QualityTeam"},
+    spark=spark,
+)
 
 # COMMAND ----------
 
-if rows:
-    df = spark.createDataFrame(rows)
-    (df.write.format("delta")
-       .mode("overwrite")
-       .option("overwriteSchema", "true")
-       .saveAsTable(f"{CATALOG}.bronze.raw_workbooks"))
-    display(spark.table(f"{CATALOG}.bronze.raw_workbooks"))
-else:
-    print("no workbooks found — run 00_setup.py first")
+display(spark.table(f"{CATALOG}.bronze.raw_workbooks"))

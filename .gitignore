@@ -6,4 +6,6 @@ __pycache__/
 .cache/
 data/mock_sharepoint/output/*
 !data/mock_sharepoint/output/.gitkeep
+data/mock_sharepoint/input/*.xlsx
 data/gold_local/
+data/bronze_landing/

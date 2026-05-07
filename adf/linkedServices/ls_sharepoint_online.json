@@ -1,0 +1,28 @@
+{
+  "name": "ls_sharepoint_online",
+  "type": "Microsoft.DataFactory/factories/linkedServices",
+  "properties": {
+    "type": "SharePointOnlineList",
+    "annotations": [
+      "Source system for Quality team Excel workbooks.",
+      "Production: replace _mock* fields with siteUrl + servicePrincipal credentials.",
+      "Mock: backed by connectors/sharepoint_mock.SharePointMock against data/mock_sharepoint/."
+    ],
+    "typeProperties": {
+      "siteUrl": "https://contoso.sharepoint.com/sites/QualityTeam",
+      "tenantId": "00000000-0000-0000-0000-000000000000",
+      "servicePrincipalId": "00000000-0000-0000-0000-000000000000",
+      "servicePrincipalKey": {
+        "type": "AzureKeyVaultSecret",
+        "store": { "referenceName": "ls_keyvault", "type": "LinkedServiceReference" },
+        "secretName": "sharepoint-sp-secret"
+      }
+    },
+    "_mock": {
+      "backend": "SharePointMock",
+      "site": "QualityTeam",
+      "rootHint": "data/mock_sharepoint",
+      "note": "Runner resolves this LS to a SharePointMock instance when _mock.backend == 'SharePointMock'. Drop _mock and switch backend to 'GraphSDK' for production."
+    }
+  }
+}

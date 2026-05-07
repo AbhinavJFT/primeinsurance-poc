@@ -1,0 +1,15 @@
+{
+  "name": "tr_on_demand",
+  "type": "Microsoft.DataFactory/factories/triggers",
+  "properties": {
+    "type": "Manual",
+    "annotations": [
+      "On-demand trigger — kicked off by notebooks 01 / 04 or by `python -m connectors.adf.runner <pipeline>`.",
+      "For scheduled runs, replace with a TumblingWindowTrigger or ScheduleTrigger."
+    ],
+    "pipelines": [
+      { "pipelineReference": { "referenceName": "pl_ingest_sp_to_bronze", "type": "PipelineReference" } },
+      { "pipelineReference": { "referenceName": "pl_export_gold_to_sp",  "type": "PipelineReference" } }
+    ]
+  }
+}

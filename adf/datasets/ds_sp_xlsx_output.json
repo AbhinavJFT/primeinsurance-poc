@@ -1,0 +1,25 @@
+{
+  "name": "ds_sp_xlsx_output",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "Binary",
+    "linkedServiceName": {
+      "referenceName": "ls_sharepoint_online",
+      "type": "LinkedServiceReference"
+    },
+    "annotations": [
+      "SharePoint /output — cleaned single-sheet workbooks land here."
+    ],
+    "parameters": {
+      "fileName": { "type": "String", "defaultValue": "" }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "HttpServerLocation",
+        "folderPath": "output",
+        "fileName": "@dataset().fileName"
+      },
+      "compression": null
+    }
+  }
+}

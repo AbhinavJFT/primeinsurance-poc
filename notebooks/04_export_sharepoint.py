@@ -1,11 +1,19 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 04 — Export cleaned workbooks to SharePoint /output
+# MAGIC # 04 — Export cleaned workbooks to SharePoint /output (ADF mock)
 # MAGIC
-# MAGIC Reads `gold.fact_observation` and writes one tidy single-sheet .xlsx per
-# MAGIC source workbook to the mock SharePoint /output folder (a UC Volume on
-# MAGIC Databricks; replace `SharePointMock` with a Microsoft Graph client to
-# MAGIC point at real SharePoint).
+# MAGIC Thin orchestrator over the self-contained ADF runner. Reads the pipeline
+# MAGIC definition from `adf/pipelines/pl_export_gold_to_sp.json` and executes
+# MAGIC the activities (Lookup → ForEach[Copy]) against the gold/silver Delta
+# MAGIC tables and the SharePoint mock /output folder.
+# MAGIC
+# MAGIC End state, identical to the previous hand-rolled notebook:
+# MAGIC * one tidy 3-sheet `.xlsx` (`<workbook>_CLEAN.xlsx`) per source file
+# MAGIC   in `/Volumes/{catalog}/bronze/{volume_output}/`
+# MAGIC * sheets: `observations`, `dq_issues`, `column_mapping_log`
+# MAGIC
+# MAGIC The Copy activity that materializes the xlsx is mock-only — production
+# MAGIC ADF would chain a Databricks notebook activity for the openpyxl step.
 
 # COMMAND ----------
 
@@ -16,72 +24,32 @@ VOL_OUT = dbutils.widgets.get("volume_output")
 
 # COMMAND ----------
 
-import shutil
+import os
 import sys
-import tempfile
-from pathlib import Path
-
 sys.path.insert(0, "../")
 
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils import get_column_letter
+# Bind the SharePointMock root to the UC Volume tree on Databricks; the
+# dataset folderPath "output" is then aliased to the actual volume name.
+os.environ["SHAREPOINT_MOCK_ROOT"] = f"/Volumes/{CATALOG}/bronze"
+os.environ["SHAREPOINT_FOLDER_ALIAS_output"] = VOL_OUT
 
-OUTPUT_PATH = Path(f"/Volumes/{CATALOG}/bronze/{VOL_OUT}")
-OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
-# UC Volumes are FUSE-mounted and don't support seek() during xlsx zip writes;
-# build each workbook in a local temp dir, then stream-copy to the Volume.
-_LOCAL_STAGING = Path(tempfile.mkdtemp(prefix="quality_export_"))
+from connectors.adf import run_pipeline
 
-# COMMAND ----------
-
-obs = spark.table(f"{CATALOG}.gold.fact_observation")
-dq = spark.table(f"{CATALOG}.silver.dq_issues")
-mapping = spark.table(f"{CATALOG}.silver.column_mapping_log")
-
-workbooks = [r.workbook for r in obs.select("workbook").distinct().collect()]
-print(f"writing cleaned workbooks for: {workbooks}")
+result = run_pipeline(
+    "pl_export_gold_to_sp",
+    parameters={"catalog": CATALOG, "site": "QualityTeam"},
+    spark=spark,
+)
 
 # COMMAND ----------
 
-def _style_header(ws, headers):
-    for j, h in enumerate(headers, start=1):
-        c = ws.cell(row=1, column=j, value=h)
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = PatternFill(start_color="305496", end_color="305496", fill_type="solid")
-        ws.column_dimensions[get_column_letter(j)].width = 18
-    ws.freeze_panes = "A2"
+# MAGIC %md
+# MAGIC ## Where the files landed
 
+# COMMAND ----------
 
-for wb_name in workbooks:
-    wb = Workbook()
-    wb.remove(wb.active)
+from pathlib import Path
 
-    obs_pdf = (obs.where(f"workbook = '{wb_name}'")
-                  .orderBy("sheet", "row_seq", "analyte").toPandas())
-    dq_pdf = dq.where(f"workbook = '{wb_name}'").toPandas()
-    map_pdf = mapping.where(f"workbook = '{wb_name}'").toPandas()
-
-    obs_ws = wb.create_sheet("observations")
-    _style_header(obs_ws, list(obs_pdf.columns))
-    for i, row in enumerate(obs_pdf.itertuples(index=False), start=2):
-        for j, v in enumerate(row, start=1):
-            obs_ws.cell(row=i, column=j, value=v)
-
-    dq_ws = wb.create_sheet("dq_issues")
-    _style_header(dq_ws, list(dq_pdf.columns))
-    for i, row in enumerate(dq_pdf.itertuples(index=False), start=2):
-        for j, v in enumerate(row, start=1):
-            dq_ws.cell(row=i, column=j, value=v)
-
-    map_ws = wb.create_sheet("column_mapping_log")
-    _style_header(map_ws, list(map_pdf.columns))
-    for i, row in enumerate(map_pdf.itertuples(index=False), start=2):
-        for j, v in enumerate(row, start=1):
-            map_ws.cell(row=i, column=j, value=v)
-
-    staged = _LOCAL_STAGING / wb_name.replace(".xlsx", "_CLEAN.xlsx")
-    wb.save(staged)
-    target = OUTPUT_PATH / staged.name
-    shutil.copy(staged, target)
-    print(f"  wrote {target}  ({target.stat().st_size:,} bytes)")
+output_path = Path(f"/Volumes/{CATALOG}/bronze/{VOL_OUT}")
+for p in sorted(output_path.glob("*_CLEAN.xlsx")):
+    print(f"  {p.name:<48} {p.stat().st_size:>10,} bytes")

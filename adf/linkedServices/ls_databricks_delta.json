@@ -1,0 +1,24 @@
+{
+  "name": "ls_databricks_delta",
+  "type": "Microsoft.DataFactory/factories/linkedServices",
+  "properties": {
+    "type": "AzureDatabricksDeltaLake",
+    "annotations": [
+      "Sink (and, for export, source) for the bronze/silver/gold Delta layer.",
+      "Backed by a UC Volume on Databricks; backed by data/bronze_landing/ locally."
+    ],
+    "typeProperties": {
+      "domain": "https://dbc-43bf0133-31e2.cloud.databricks.com",
+      "clusterId": "@{linkedService().clusterId}",
+      "workspaceResourceId": "/subscriptions/.../Microsoft.Databricks/workspaces/quality-de",
+      "authentication": "MSI"
+    },
+    "_mock": {
+      "backend": "DeltaBackend",
+      "catalog": "quality_de",
+      "volumeRoot": "/Volumes/quality_de/bronze",
+      "localRoot": "data/bronze_landing",
+      "note": "When a Spark session is passed to run_pipeline(spark=...), the backend writes Delta tables. Without spark, it writes a JSON manifest + CSVs under localRoot."
+    }
+  }
+}

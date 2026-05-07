@@ -1,0 +1,78 @@
+{
+  "name": "pl_export_gold_to_sp",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "annotations": [
+      "Export: gold.fact_observation + companions → one tidy 3-sheet .xlsx per workbook in SharePoint /output.",
+      "Replaces the body of notebooks/04_export_sharepoint.py."
+    ],
+    "parameters": {
+      "catalog": { "type": "String", "defaultValue": "quality_de" },
+      "site":    { "type": "String", "defaultValue": "QualityTeam" }
+    },
+    "activities": [
+      {
+        "name": "LookupDistinctWorkbooks",
+        "type": "Lookup",
+        "dependsOn": [],
+        "typeProperties": {
+          "source": {
+            "type": "AzureDatabricksDeltaLakeSource",
+            "query": "SELECT DISTINCT workbook FROM @{pipeline().parameters.catalog}.gold.fact_observation"
+          },
+          "dataset": {
+            "referenceName": "ds_gold_observation",
+            "type": "DatasetReference",
+            "parameters": { "workbook": "" }
+          },
+          "firstRowOnly": false
+        }
+      },
+      {
+        "name": "ForEachWorkbook",
+        "type": "ForEach",
+        "dependsOn": [
+          { "activity": "LookupDistinctWorkbooks", "dependencyConditions": ["Succeeded"] }
+        ],
+        "typeProperties": {
+          "items": { "value": "@activity('LookupDistinctWorkbooks').output.value", "type": "Expression" },
+          "isSequential": true,
+          "activities": [
+            {
+              "name": "ExportCleanWorkbook",
+              "type": "Copy",
+              "typeProperties": {
+                "source": {
+                  "type": "AzureDatabricksDeltaLakeSource",
+                  "query": "SELECT * FROM @{pipeline().parameters.catalog}.gold.fact_observation WHERE workbook = '@{item().workbook}'"
+                },
+                "sink": { "type": "BinarySink", "storeSettings": { "type": "HttpWriteSettings" } }
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_gold_observation",
+                  "type": "DatasetReference",
+                  "parameters": { "workbook": "@item().workbook" }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_sp_xlsx_output",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "fileName": "@replace(item().workbook, '.xlsx', '_CLEAN.xlsx')"
+                  }
+                }
+              ],
+              "_mock": {
+                "handler": "delta_to_xlsx",
+                "sheets": ["observations", "dq_issues", "column_mapping_log"],
+                "note": "Mock runner builds a 3-sheet xlsx (observations + companion tables filtered by workbook) and uploads via SharePointMock. Real ADF would chain a Databricks notebook activity that does the openpyxl serialization."
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

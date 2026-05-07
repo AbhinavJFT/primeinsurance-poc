@@ -1,0 +1,25 @@
+{
+  "name": "ds_sp_xlsx_input",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "Binary",
+    "linkedServiceName": {
+      "referenceName": "ls_sharepoint_online",
+      "type": "LinkedServiceReference"
+    },
+    "annotations": [
+      "SharePoint /input — Quality team raw workbooks land here."
+    ],
+    "parameters": {
+      "fileName": { "type": "String", "defaultValue": "" }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "HttpServerLocation",
+        "folderPath": "input",
+        "fileName": "@dataset().fileName"
+      },
+      "compression": null
+    }
+  }
+}

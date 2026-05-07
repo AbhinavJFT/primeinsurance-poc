@@ -1,0 +1,28 @@
+{
+  "name": "ds_uc_volume_bronze",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "Binary",
+    "linkedServiceName": {
+      "referenceName": "ls_databricks_delta",
+      "type": "LinkedServiceReference"
+    },
+    "annotations": [
+      "Bronze raw landing — copies of source workbooks under a UC Volume.",
+      "On Databricks: /Volumes/{catalog}/bronze/{volume}.",
+      "Locally: data/bronze_landing/sharepoint_input/."
+    ],
+    "parameters": {
+      "fileName": { "type": "String", "defaultValue": "" },
+      "volume":   { "type": "String", "defaultValue": "sharepoint_input" }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "folderPath": "@{dataset().volume}",
+        "fileName": "@dataset().fileName"
+      },
+      "compression": null
+    }
+  }
+}
