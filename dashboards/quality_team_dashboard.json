@@ -1,0 +1,119 @@
+{
+  "display_name": "Quality team — SharePoint cleaning POC",
+  "description": "Before/after view of the AI-driven cleaning pipeline.",
+  "datasets": [
+    {
+      "name": "ds_pass_rate",
+      "displayName": "Batch pass rate",
+      "queryLines": [
+        "SELECT batch_no, sheet, workbook, observations, passing, failing, pass_rate",
+        "FROM ${catalog}.gold.mv_batch_pass_rate",
+        "ORDER BY pass_rate ASC"
+      ]
+    },
+    {
+      "name": "ds_compliance_summary",
+      "displayName": "Overall compliance",
+      "queryLines": [
+        "SELECT",
+        "  COUNT(*)                                       AS total_obs,",
+        "  SUM(CASE WHEN pass = true  THEN 1 ELSE 0 END)  AS passing,",
+        "  SUM(CASE WHEN pass = false THEN 1 ELSE 0 END)  AS failing,",
+        "  ROUND(AVG(CASE WHEN pass = true THEN 100.0 WHEN pass = false THEN 0.0 END), 2)",
+        "    AS pass_rate_pct",
+        "FROM ${catalog}.gold.fact_observation"
+      ]
+    },
+    {
+      "name": "ds_impurity_trend",
+      "displayName": "Top impurities trend",
+      "queryLines": [
+        "SELECT analyte_canonical, sample_date, avg_value, max_value, spec_max",
+        "FROM ${catalog}.gold.mv_impurity_trend",
+        "ORDER BY sample_date"
+      ]
+    },
+    {
+      "name": "ds_dq_breakdown",
+      "displayName": "DQ rule breakdown",
+      "queryLines": [
+        "SELECT rule, severity, COUNT(*) AS issue_count",
+        "FROM ${catalog}.silver.dq_issues",
+        "GROUP BY rule, severity",
+        "ORDER BY issue_count DESC"
+      ]
+    },
+    {
+      "name": "ds_mapping_confidence",
+      "displayName": "AI column mapping confidence",
+      "queryLines": [
+        "SELECT sheet, raw_label, canonical, role, confidence, rationale, source",
+        "FROM ${catalog}.silver.column_mapping_log",
+        "WHERE role <> 'ignored'",
+        "ORDER BY confidence ASC"
+      ]
+    },
+    {
+      "name": "ds_spec_violations",
+      "displayName": "Spec violations by analyte",
+      "queryLines": [
+        "SELECT analyte_canonical, workbook, sheet, violation_count, avg_overshoot",
+        "FROM ${catalog}.gold.mv_spec_violations",
+        "ORDER BY violation_count DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Overview",
+      "layout": [
+        { "widget": { "name": "kpi_pass", "queries": [{ "name": "ds_compliance_summary" }],
+                       "spec": { "version": 3, "widgetType": "counter",
+                                 "encodings": { "value": { "fieldName": "pass_rate_pct",
+                                                          "displayName": "Pass rate %" } } } },
+          "position": { "x": 0, "y": 0, "width": 2, "height": 3 } },
+        { "widget": { "name": "kpi_total", "queries": [{ "name": "ds_compliance_summary" }],
+                       "spec": { "version": 3, "widgetType": "counter",
+                                 "encodings": { "value": { "fieldName": "total_obs",
+                                                          "displayName": "Observations cleaned" } } } },
+          "position": { "x": 2, "y": 0, "width": 2, "height": 3 } },
+        { "widget": { "name": "kpi_failing", "queries": [{ "name": "ds_compliance_summary" }],
+                       "spec": { "version": 3, "widgetType": "counter",
+                                 "encodings": { "value": { "fieldName": "failing",
+                                                          "displayName": "Spec violations" } } } },
+          "position": { "x": 4, "y": 0, "width": 2, "height": 3 } },
+        { "widget": { "name": "tbl_pass_rate", "queries": [{ "name": "ds_pass_rate" }],
+                       "spec": { "version": 1, "widgetType": "table" } },
+          "position": { "x": 0, "y": 3, "width": 6, "height": 6 } },
+        { "widget": { "name": "chart_impurity_trend", "queries": [{ "name": "ds_impurity_trend" }],
+                       "spec": { "version": 3, "widgetType": "line",
+                                 "encodings": { "x": { "fieldName": "sample_date" },
+                                                "y": { "fieldName": "avg_value" },
+                                                "color": { "fieldName": "analyte_canonical" } } } },
+          "position": { "x": 0, "y": 9, "width": 6, "height": 6 } }
+      ]
+    },
+    {
+      "name": "data_quality",
+      "displayName": "Data quality",
+      "layout": [
+        { "widget": { "name": "chart_dq", "queries": [{ "name": "ds_dq_breakdown" }],
+                       "spec": { "version": 3, "widgetType": "bar",
+                                 "encodings": { "x": { "fieldName": "rule" },
+                                                "y": { "fieldName": "issue_count" },
+                                                "color": { "fieldName": "severity" } } } },
+          "position": { "x": 0, "y": 0, "width": 6, "height": 6 } },
+        { "widget": { "name": "tbl_mapping", "queries": [{ "name": "ds_mapping_confidence" }],
+                       "spec": { "version": 1, "widgetType": "table" } },
+          "position": { "x": 0, "y": 6, "width": 6, "height": 6 } },
+        { "widget": { "name": "tbl_violations", "queries": [{ "name": "ds_spec_violations" }],
+                       "spec": { "version": 1, "widgetType": "table" } },
+          "position": { "x": 0, "y": 12, "width": 6, "height": 6 } }
+      ]
+    }
+  ],
+  "parameters": [
+    { "name": "catalog", "displayName": "Catalog", "default": "quality_de" }
+  ]
+}

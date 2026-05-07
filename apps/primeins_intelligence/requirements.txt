@@ -1,4 +1,0 @@
-streamlit
-databricks-sdk>=0.40.0
-psycopg2-binary
-pandas

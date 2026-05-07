@@ -1,427 +1,102 @@
-# Databricks Asset Bundle configuration for PrimeInsurance Data Intelligence Platform
-#
-# Deploy:   databricks bundle deploy --target dev
-# Run:      databricks bundle run primeins_end_to_end --target dev
-# Destroy:  databricks bundle destroy --target dev
-#
-# To migrate to a new workspace (commercial account):
-#   1. Update the host and catalog in the prod target
-#   2. Run: databricks bundle deploy --target prod
-#   3. Everything deploys automatically — pipelines, jobs, permissions
-
 bundle:
-  name: primeinsurance-poc
+  name: quality_de
 
 variables:
   catalog:
-    description: Unity Catalog name for all tables
-    default: primeins
+    description: Unity Catalog name
+    default: quality_de
+  volume_input:
+    description: Volume name for SharePoint input mock
+    default: sharepoint_input
+  volume_output:
+    description: Volume name for SharePoint output mock
+    default: sharepoint_output
+  llm_endpoint:
+    description: Foundation Model serving endpoint for column mapping
+    default: databricks-gpt-oss-20b
   warehouse_id:
-    description: SQL Warehouse ID for serving
-    default: 0506e893342cdfbe
-
-# ============================================================
-# DLT PIPELINES
-# ============================================================
+    description: SQL Warehouse used by dashboards / Genie / Lakebase queries
+    default: 2de6a251cf2870eb   # Serverless Starter Warehouse on newaccount
 
 resources:
-  pipelines:
-    bronze_pipeline:
-      name: primeins_bronze_pipeline
-      catalog: ${var.catalog}
-      target: bronze
-      channel: CURRENT
-      development: true
-      continuous: false
-      libraries:
-        - notebook:
-            path: ./notebooks/bronze/01_bronze_ingestion_dlt.py
-
-    silver_pipeline:
-      name: primeins_silver_pipeline
-      catalog: ${var.catalog}
-      target: silver
-      channel: CURRENT
-      development: true
-      continuous: false
-      libraries:
-        - notebook:
-            path: ./notebooks/silver/02_silver_dlt_pipeline.py
-
-    gold_pipeline:
-      name: primeins_gold_pipeline
-      catalog: ${var.catalog}
-      target: gold
-      channel: CURRENT
-      development: true
-      continuous: false
-      libraries:
-        - notebook:
-            path: ./notebooks/gold/03_gold_dlt_pipeline.py
-
-  # ============================================================
-  # WORKFLOW JOBS
-  # ============================================================
-
   jobs:
-    primeins_end_to_end:
-      name: PrimeInsurance_End_to_End_Pipeline
-      tags:
-        project: primeinsurance-poc
-        team: jellyfish-technologies
-      tasks:
-        - task_key: bronze_pipeline
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.bronze_pipeline.id}
-            full_refresh: false
-
-        - task_key: silver_pipeline
-          depends_on:
-            - task_key: bronze_pipeline
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.silver_pipeline.id}
-            full_refresh: false
-
-        - task_key: gold_pipeline
-          depends_on:
-            - task_key: silver_pipeline
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.gold_pipeline.id}
-            full_refresh: false
-
-        - task_key: uc1_dq_explainer
-          depends_on:
-            - task_key: silver_pipeline
-          notebook_task:
-            notebook_path: ./notebooks/genai/04_uc1_dq_explanations.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-        - task_key: uc2_anomaly_engine
-          depends_on:
-            - task_key: silver_pipeline
-          notebook_task:
-            notebook_path: ./notebooks/genai/04_uc2_anomaly_engine.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-        - task_key: uc3_rag_policy
-          depends_on:
-            - task_key: gold_pipeline
-          notebook_task:
-            notebook_path: ./notebooks/genai/04_uc3_policy_rag.py
-            base_parameters:
-              catalog: ${var.catalog}
-              run_test_queries: "false"
-            source: WORKSPACE
-
-        - task_key: uc4_executive_insights
-          depends_on:
-            - task_key: gold_pipeline
-          notebook_task:
-            notebook_path: ./notebooks/genai/04_uc4_executive_insights.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-        - task_key: vector_store_sync
-          depends_on:
-            - task_key: gold_pipeline
-          notebook_task:
-            notebook_path: ./notebooks/genai/05_uc3_vector_store_sync.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-    # ── Standalone report & analysis notebooks ──
-
-    regulatory_customer_report:
-      name: PrimeInsurance_Regulatory_Report
-      tags:
-        project: primeinsurance-poc
-      tasks:
-        - task_key: regulatory_report
-          notebook_task:
-            notebook_path: ./notebooks/gold/07_regulatory_customer_report.py
-            source: WORKSPACE
-
-    executive_dashboard:
-      name: PrimeInsurance_Executive_Dashboard
-      tags:
-        project: primeinsurance-poc
-      tasks:
-        - task_key: dashboard
-          notebook_task:
-            notebook_path: ./notebooks/gold/05_executive_dashboard.py
-            source: WORKSPACE
-
-    before_after_comparison:
-      name: PrimeInsurance_Before_After
-      tags:
-        project: primeinsurance-poc
-      tasks:
-        - task_key: comparison
-          notebook_task:
-            notebook_path: ./notebooks/gold/06_before_after_comparison.py
-            source: WORKSPACE
-
-    claims_sla_monitoring:
-      name: PrimeInsurance_Claims_SLA_Monitoring
-      tags:
-        project: primeinsurance-poc
-      tasks:
-        - task_key: sla_monitoring
-          notebook_task:
-            notebook_path: ./notebooks/gold/08_claims_sla_monitoring.py
-            source: WORKSPACE
-
-    inventory_redistribution:
-      name: PrimeInsurance_Inventory_Redistribution
-      tags:
-        project: primeinsurance-poc
-      tasks:
-        - task_key: redistribution
-          notebook_task:
-            notebook_path: ./notebooks/gold/09_inventory_redistribution.py
-            source: WORKSPACE
-
-    customer_risk_segmentation:
-      name: PrimeInsurance_Customer_Risk_Segmentation
-      tags:
-        project: primeinsurance-poc
-      tasks:
-        - task_key: risk_segmentation
-          notebook_task:
-            notebook_path: ./notebooks/gold/10_customer_risk_segmentation.py
-            source: WORKSPACE
-
-    vector_store_setup:
-      name: PrimeInsurance_Vector_Store_Setup
-      tags:
-        project: primeinsurance-poc
-        run: once
-      tasks:
-        - task_key: vs_setup
-          notebook_task:
-            notebook_path: ./notebooks/genai/05_uc3_vector_store_setup.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-    vector_search_pipeline:
-      name: PrimeInsurance_Vector_Search_Pipeline
-      tags:
-        project: primeinsurance-poc
-        approach: vector-search
-      tasks:
-        - task_key: gold_pipeline
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.gold_pipeline.id}
-            full_refresh: false
-
-        - task_key: vector_store_sync
-          depends_on:
-            - task_key: gold_pipeline
-          notebook_task:
-            notebook_path: ./notebooks/genai/05_uc3_vector_store_sync.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-        - task_key: vector_search_inference
-          depends_on:
-            - task_key: vector_store_sync
-          notebook_task:
-            notebook_path: ./notebooks/genai/05_uc3_vector_search_inference.py
-            base_parameters:
-              catalog: ${var.catalog}
-            source: WORKSPACE
-
-    # ── Phase 1.5 quality resolution loop ──
-
-    quality_resolution_logger_setup:
-      name: PrimeInsurance_Quality_Resolution_Logger_Setup
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-        run: once
+    quality_de_pipeline:
+      name: quality_de — SharePoint cleaning pipeline
+      description: |
+        End-to-end pipeline that cleans Quality team Excel workbooks from a
+        SharePoint mock /input volume, AI-maps headers to a canonical schema,
+        materializes Bronze/Silver/Gold Delta tables, and writes tidy .xlsx
+        files to a SharePoint mock /output volume.
       tasks:
         - task_key: setup
           notebook_task:
-            notebook_path: ./notebooks/quality/36_dq_resolution_logger.py
+            notebook_path: notebooks/00_setup.py
             base_parameters:
               catalog: ${var.catalog}
-            source: WORKSPACE
+              volume_input: ${var.volume_input}
+              volume_output: ${var.volume_output}
+          environment_key: default
 
-    quality_trend_alerting:
-      name: PrimeInsurance_Quality_Trend_Alerting
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-      tasks:
-        - task_key: trend_alerting
+        - task_key: bronze_ingest
+          depends_on:
+            - task_key: setup
           notebook_task:
-            notebook_path: ./notebooks/quality/30_dq_trend_alerting.py
+            notebook_path: notebooks/01_bronze_sharepoint_ingest.py
             base_parameters:
               catalog: ${var.catalog}
-              threshold: "2.0"
-              comparison_lookback_days: "7"
-              min_records_floor: "10"
-            source: WORKSPACE
+              volume_input: ${var.volume_input}
+          environment_key: default
 
-    quality_volume_cap_check:
-      name: PrimeInsurance_Quality_Volume_Cap_Check
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-      tasks:
-        - task_key: volume_cap_check
+        - task_key: silver_ai_cleaning
+          depends_on:
+            - task_key: bronze_ingest
           notebook_task:
-            notebook_path: ./notebooks/quality/31_dq_volume_cap_check.py
+            notebook_path: notebooks/02_silver_ai_cleaning.py
             base_parameters:
               catalog: ${var.catalog}
-              default_threshold_pct: "5.0"
-              per_table_thresholds: "sales=70.0"
-              exclude_tables: ""
-              halt_on_breach: "true"
-            source: WORKSPACE
+              volume_input: ${var.volume_input}
+              llm_endpoint: ${var.llm_endpoint}
+          environment_key: default
 
-    quality_metrics_rollup:
-      name: PrimeInsurance_Quality_Metrics_Rollup
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-      tasks:
-        - task_key: metrics_rollup
+        - task_key: gold_curated
+          depends_on:
+            - task_key: silver_ai_cleaning
           notebook_task:
-            notebook_path: ./notebooks/quality/37_dq_metrics_rollup.py
+            notebook_path: notebooks/03_gold_curated.py
             base_parameters:
               catalog: ${var.catalog}
-            source: WORKSPACE
+          environment_key: default
 
-    quality_steward_review:
-      name: PrimeInsurance_Quality_Steward_Review
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-        run: manual
-      tasks:
-        - task_key: steward_review
+        - task_key: export_sharepoint
+          depends_on:
+            - task_key: gold_curated
           notebook_task:
-            notebook_path: ./notebooks/quality/34_dq_steward_review.py
+            notebook_path: notebooks/04_export_sharepoint.py
             base_parameters:
               catalog: ${var.catalog}
-              steward_email: ""
-            source: WORKSPACE
+              volume_output: ${var.volume_output}
+          environment_key: default
 
-    quality_retention_archiver:
-      name: PrimeInsurance_Quality_Retention_Archiver
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-      tasks:
-        - task_key: retention_archiver
-          notebook_task:
-            notebook_path: ./notebooks/quality/32_dq_retention_archiver.py
-            base_parameters:
-              catalog: ${var.catalog}
-              retention_days: "90"
-              mode: "flag_only"
-              dry_run: "false"
-              confirm_delete: ""
-            source: WORKSPACE
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - openpyxl>=3.1.2
+              - pyyaml>=6.0
+              - openai>=1.40.0
 
-    quality_source_owner_digest:
-      name: PrimeInsurance_Quality_Source_Owner_Digest
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-      tasks:
-        - task_key: source_owner_digest
-          notebook_task:
-            notebook_path: ./notebooks/quality/33_dq_source_owner_digest.py
-            base_parameters:
-              catalog: ${var.catalog}
-              week_starting: ""
-              slack_webhook: ""
-              seed_owners: "auto"
-            source: WORKSPACE
-
-    # ── Phase 2 serving layer ──
-
-    serving_lakebase_load:
-      name: PrimeInsurance_Serving_Lakebase_Load
-      tags:
-        project: primeinsurance-poc
-        phase: "2"
-      tasks:
-        - task_key: lakebase_direct_load
-          notebook_task:
-            notebook_path: ./notebooks/serving/40_lakebase_direct_load.py
-            base_parameters:
-              catalog: ${var.catalog}
-              instance_name: primeins-lakebase
-              database_name: primeins
-            source: WORKSPACE
-
-    quality_rule_backfill:
-      name: PrimeInsurance_Quality_Rule_Backfill
-      tags:
-        project: primeinsurance-poc
-        phase: "1.5"
-        run: manual
-      tasks:
-        - task_key: rule_backfill
-          notebook_task:
-            notebook_path: ./notebooks/quality/35_dq_rule_backfill.py
-            base_parameters:
-              catalog: ${var.catalog}
-              quarantine_table: "quarantine_customers"
-              passing_filter_sql: "region IN ('East', 'West', 'Central', 'South', 'North')"
-              reason_code: "RULE_LOOSENED"
-              notes: "Rule was relaxed — see ticket #__"
-              rule_name: ""
-              performed_by: ""
-              dry_run: "true"
-            source: WORKSPACE
-
-# ============================================================
-# DEPLOYMENT TARGETS
-# ============================================================
+      queue:
+        enabled: true
 
 targets:
   dev:
     mode: development
     default: true
     workspace:
-      host: https://dbc-095b6263-cfd6.cloud.databricks.com
-    variables:
-      catalog: primeins
-      warehouse_id: 0506e893342cdfbe
+      host: https://dbc-43bf0133-31e2.cloud.databricks.com
 
   prod:
     mode: production
     workspace:
-      host: https://dbc-f47ab38f-95c2.cloud.databricks.com
-      root_path: /Workspace/Users/neeraj.kumar@jellyfishtechnologies.com/.bundle/${bundle.name}/${bundle.target}
-    variables:
-      catalog: primeins
-      warehouse_id: 8d2c586aebb179ed
-    # run_as is intentionally omitted — jobs will run as the deploying user.
-    # Add a service_principal_name here once one is provisioned on this workspace:
-    #   run_as:
-    #     service_principal_name: <sp-application-id>
-    # The old dev workspace (dbc-095b6263) stays alive under the `dev` target.
-    resources:
-      pipelines:
-        bronze_pipeline:
-          development: false
-          serverless: true
-        silver_pipeline:
-          development: false
-          serverless: true
-        gold_pipeline:
-          development: false
-          serverless: true
+      host: https://dbc-43bf0133-31e2.cloud.databricks.com

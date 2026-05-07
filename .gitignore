@@ -1,13 +1,9 @@
-.DS_Store
-*.pyc
+.venv/
 __pycache__/
-.ipynb_checkpoints/
-*.egg-info/
-.sfdx/
+*.pyc
+.DS_Store
 .databricks/
-
-# Local-only Genie space context — not synced to git.
-# The genie/ directory holds the portable definition used to bootstrap a
-# Genie space in any workspace via the UI, but is kept out of the repo per
-# team decision.
-genie/
+.cache/
+data/mock_sharepoint/output/*
+!data/mock_sharepoint/output/.gitkeep
+data/gold_local/
