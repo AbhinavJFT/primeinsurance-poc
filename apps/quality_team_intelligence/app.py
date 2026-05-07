@@ -34,7 +34,9 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 # Vendored deps live alongside this file (see vendor.sh). When running
 # locally from the repo root we also fall back to the repo's quality_core.
@@ -289,6 +291,7 @@ def _list_sheets(path: Path) -> list[str]:
 
 
 def _read_sheet_preview(path: Path, sheet_name: str, max_rows: int = 22) -> pd.DataFrame:
+    """Compact tabular preview (used in dropdown previews)."""
     wb = load_workbook(path, read_only=True, data_only=True)
     try:
         ws = wb[sheet_name]
@@ -305,6 +308,185 @@ def _read_sheet_preview(path: Path, sheet_name: str, max_rows: int = 22) -> pd.D
     cols = [chr(65 + c) if c < 26 else f"col_{c+1}" for c in range(width)]
     padded = [list(r) + [None] * (width - len(r)) for r in rows]
     return pd.DataFrame(padded, columns=cols)
+
+
+# ---------------------------------------------------------------------------
+# Excel-shaped renderer (preserves merged cells, fills, fonts)
+# ---------------------------------------------------------------------------
+
+def _format_cell_value(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        if v.hour == 0 and v.minute == 0 and v.second == 0:
+            return v.strftime("%Y-%m-%d")
+        return v.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(v, float):
+        if v.is_integer():
+            return str(int(v))
+        s = f"{v:.4f}".rstrip("0").rstrip(".")
+        return s if s else "0"
+    return str(v)
+
+
+def _argb_to_hex(color) -> str | None:
+    """openpyxl colors come back as ARGB hex strings. Strip alpha; skip
+    pure black/white/empty so we don't repaint default cells."""
+    if color is None:
+        return None
+    s = color if isinstance(color, str) else getattr(color, "rgb", None)
+    if not isinstance(s, str):
+        return None
+    s = s.upper()
+    if len(s) == 8:
+        s = s[2:]
+    if s in ("000000", "FFFFFF", ""):
+        return None
+    if len(s) != 6:
+        return None
+    return f"#{s}"
+
+
+def _xlsx_sheet_to_html(path: Path, sheet_name: str) -> str:
+    """Render a sheet as an HTML <table> preserving merged cells, fills,
+    fonts, alignment. Returns just the table markup (no <html> wrapper)."""
+    wb = load_workbook(path, data_only=True)  # not read_only — we need merged_cells
+    try:
+        ws = wb[sheet_name]
+        max_row = ws.max_row or 0
+        max_col = ws.max_column or 0
+
+        # Merged ranges → top-left cell + skip set for the rest.
+        merged_top: dict[tuple[int, int], tuple[int, int]] = {}
+        skip_cells: set[tuple[int, int]] = set()
+        for mrange in ws.merged_cells.ranges:
+            r0, c0 = mrange.min_row, mrange.min_col
+            r1, c1 = mrange.max_row, mrange.max_col
+            merged_top[(r0, c0)] = (r1 - r0 + 1, c1 - c0 + 1)
+            for rr in range(r0, r1 + 1):
+                for cc in range(c0, c1 + 1):
+                    if (rr, cc) != (r0, c0):
+                        skip_cells.add((rr, cc))
+
+        # Column widths in pixels (openpyxl exposes character widths).
+        col_widths: dict[int, int] = {}
+        for letter, dim in (ws.column_dimensions or {}).items():
+            try:
+                idx = ws[f"{letter}1"].column
+                if dim.width:
+                    col_widths[idx] = max(60, int(dim.width * 7))
+            except Exception:
+                pass
+
+        out = ['<table class="xlsx">']
+
+        # Top header row: A, B, C, …
+        out.append('<thead><tr><th class="rowhdr"></th>')
+        for c in range(1, max_col + 1):
+            w = col_widths.get(c, 90)
+            out.append(
+                f'<th class="colhdr" style="min-width:{w}px;width:{w}px;">'
+                f'{get_column_letter(c)}</th>'
+            )
+        out.append('</tr></thead><tbody>')
+
+        for r in range(1, max_row + 1):
+            out.append(f'<tr><td class="rowhdr">{r}</td>')
+            for c in range(1, max_col + 1):
+                if (r, c) in skip_cells:
+                    continue
+                cell = ws.cell(row=r, column=c)
+
+                attrs: list[str] = []
+                if (r, c) in merged_top:
+                    rs, cs = merged_top[(r, c)]
+                    if rs > 1:
+                        attrs.append(f'rowspan="{rs}"')
+                    if cs > 1:
+                        attrs.append(f'colspan="{cs}"')
+
+                styles: list[str] = []
+                if cell.fill and cell.fill.fill_type == "solid":
+                    bg = _argb_to_hex(cell.fill.start_color)
+                    if bg:
+                        styles.append(f"background-color:{bg}")
+                if cell.font:
+                    if cell.font.bold:
+                        styles.append("font-weight:600")
+                    if cell.font.italic:
+                        styles.append("font-style:italic")
+                    fc = _argb_to_hex(cell.font.color)
+                    if fc:
+                        styles.append(f"color:{fc}")
+                if cell.alignment:
+                    if cell.alignment.horizontal:
+                        styles.append(f"text-align:{cell.alignment.horizontal}")
+                    if cell.alignment.wrap_text:
+                        styles.append("white-space:normal")
+
+                value = cell.value
+                if (isinstance(value, (int, float))
+                        and not any("text-align" in s for s in styles)):
+                    styles.append("text-align:right")
+
+                style_attr = f'style="{";".join(styles)}"' if styles else ""
+                attr_str = " ".join(attrs)
+                display = (_format_cell_value(value)
+                           .replace("&", "&amp;")
+                           .replace("<", "&lt;")
+                           .replace(">", "&gt;"))
+                out.append(f"<td {attr_str} {style_attr}>{display}</td>")
+            out.append('</tr>')
+
+        out.append('</tbody></table>')
+        return "\n".join(out)
+    finally:
+        wb.close()
+
+
+def _render_xlsx_full(path: Path, sheet_name: str, height: int = 560):
+    """Render the sheet inside an iframe so we can fully control styling
+    (sticky row/col headers, merged-cell display) without fighting Streamlit's
+    own CSS."""
+    table_html = _xlsx_sheet_to_html(path, sheet_name)
+    page = f"""
+    <!doctype html>
+    <html><head><meta charset="utf-8">
+    <style>
+        body {{ margin: 0; padding: 0;
+                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                              Roboto, Helvetica, Arial, sans-serif;
+                 background: #FFFFFF; }}
+        .scroller {{ overflow: auto; max-height: {height - 6}px;
+                      border: 1px solid #CBD5E1; border-radius: 4px; }}
+        table.xlsx {{ border-collapse: collapse; font-size: 12px; color: #0F172A; }}
+        table.xlsx th, table.xlsx td {{
+            border: 1px solid #E2E8F0;
+            padding: 4px 6px;
+            vertical-align: middle;
+            background: #FFFFFF;
+            white-space: nowrap;
+        }}
+        table.xlsx td {{ min-width: 70px; }}
+        table.xlsx .colhdr {{
+            background: #F1F5F9; color: #475569; font-weight: 600;
+            text-align: center;
+            position: sticky; top: 0; z-index: 2;
+            border-bottom: 1px solid #94A3B8;
+        }}
+        table.xlsx .rowhdr {{
+            background: #F1F5F9; color: #475569; font-weight: 500;
+            text-align: center; min-width: 36px;
+            position: sticky; left: 0; z-index: 1;
+            border-right: 1px solid #94A3B8;
+        }}
+        table.xlsx thead .rowhdr {{ z-index: 3; }}
+    </style></head>
+    <body>
+        <div class="scroller">{table_html}</div>
+    </body></html>
+    """
+    components.html(page, height=height, scrolling=False)
 
 
 # ===========================================================================
@@ -594,11 +776,10 @@ def _render_home_files_loaded():
 
     st.markdown("&nbsp;")
 
-    # Sheet preview
+    # Sheet preview — full xlsx render with merged cells, fills, header band intact
     st.markdown("### Preview")
     sel_sheet = st.selectbox("Sheet", sheets, key="preview_sheet")
-    df = _read_sheet_preview(f, sel_sheet)
-    st.dataframe(df, use_container_width=True, height=420, hide_index=False)
+    _render_xlsx_full(f, sel_sheet, height=560)
 
     with st.expander("What you're looking at"):
         st.markdown(
@@ -969,61 +1150,69 @@ def _tab_outputs(run_dir: Path):
         "Same-format mirrors the input shape; tidy is the long-form analytics view."
     )
 
-    o1, o2 = st.columns(2, gap="large")
+    same_path = run_dir / "same_format.xlsx"
+    tidy_path = run_dir / "tidy.xlsx"
 
-    with o1:
-        st.markdown("### 📂 Same-format")
+    sub_same, sub_tidy = st.tabs([
+        "📑 Same-format (mirrors input)",
+        "📋 Tidy long-form (analytics)",
+    ])
+
+    # ---- Same-format ----
+    with sub_same:
         st.caption(
-            "Input shape preserved — 7 batch tabs, merged headers, header band — "
-            "only data cells rewritten with cleaned values."
+            "Input shape preserved — 7 batch tabs, merged headers, full header "
+            "band — only data cells rewritten with cleaned values."
         )
-        same_path = run_dir / "same_format.xlsx"
-        if same_path.exists():
-            with st.container(border=True):
-                a, b = st.columns([3, 1])
-                with a:
-                    st.markdown(f"**{same_path.name}**")
-                    st.caption(f"{same_path.stat().st_size:,} bytes")
-                with b:
-                    st.download_button(
-                        "Download", data=same_path.read_bytes(),
-                        file_name=same_path.name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True, key="dl_same",
-                    )
+        if not same_path.exists():
+            st.warning("Same-format output not found.")
+        else:
+            top_l, top_r = st.columns([4, 1])
+            with top_l:
+                st.markdown(f"**{same_path.name}** &nbsp; "
+                            f"<span style='opacity:0.6'>"
+                            f"{same_path.stat().st_size:,} bytes</span>",
+                            unsafe_allow_html=True)
+            with top_r:
+                st.download_button(
+                    "⬇ Download", data=same_path.read_bytes(),
+                    file_name=same_path.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True, key="dl_same", type="primary",
+                )
             try:
                 sheets = _list_sheets(same_path)
-                sheet = st.selectbox("Preview sheet", sheets, key="same_sheet_pick")
-                st.dataframe(_read_sheet_preview(same_path, sheet),
-                             use_container_width=True, height=380)
+                sheet = st.selectbox("Sheet", sheets, key="same_sheet_pick")
+                _render_xlsx_full(same_path, sheet, height=620)
             except Exception as e:
                 st.warning(f"Preview unavailable: {e}")
 
-    with o2:
-        st.markdown("### 📂 Tidy long-form")
+    # ---- Tidy long-form ----
+    with sub_tidy:
         st.caption(
             "Three sheets: `observations`, `dq_issues`, `column_mapping_log` — "
             "ready for analyst queries and dashboards."
         )
-        tidy_path = run_dir / "tidy.xlsx"
-        if tidy_path.exists():
-            with st.container(border=True):
-                a, b = st.columns([3, 1])
-                with a:
-                    st.markdown(f"**{tidy_path.name}**")
-                    st.caption(f"{tidy_path.stat().st_size:,} bytes")
-                with b:
-                    st.download_button(
-                        "Download", data=tidy_path.read_bytes(),
-                        file_name=tidy_path.name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True, key="dl_tidy",
-                    )
+        if not tidy_path.exists():
+            st.warning("Tidy output not found.")
+        else:
+            top_l, top_r = st.columns([4, 1])
+            with top_l:
+                st.markdown(f"**{tidy_path.name}** &nbsp; "
+                            f"<span style='opacity:0.6'>"
+                            f"{tidy_path.stat().st_size:,} bytes</span>",
+                            unsafe_allow_html=True)
+            with top_r:
+                st.download_button(
+                    "⬇ Download", data=tidy_path.read_bytes(),
+                    file_name=tidy_path.name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True, key="dl_tidy", type="primary",
+                )
             try:
                 sheets = _list_sheets(tidy_path)
-                sheet = st.selectbox("Preview sheet", sheets, key="tidy_sheet_pick")
-                st.dataframe(_read_sheet_preview(tidy_path, sheet),
-                             use_container_width=True, height=380)
+                sheet = st.selectbox("Sheet", sheets, key="tidy_sheet_pick")
+                _render_xlsx_full(tidy_path, sheet, height=620)
             except Exception as e:
                 st.warning(f"Preview unavailable: {e}")
 
