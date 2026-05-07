@@ -36,9 +36,12 @@ import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
 
-# Add repo root so we can import quality_core + generate_quality_data
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO_ROOT))
+# Vendored deps live alongside this file (see vendor.sh). When running
+# locally from the repo root we also fall back to the repo's quality_core.
+APP_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(APP_DIR))
+if (APP_DIR.parent.parent / "quality_core").exists():
+    sys.path.insert(0, str(APP_DIR.parent.parent))
 
 from quality_core import process_workbook, write_tidy_workbook  # noqa: E402
 from quality_core.inplace_cleaner import build_same_format_xlsx  # noqa: E402

@@ -9,3 +9,8 @@ data/mock_sharepoint/output/*
 data/mock_sharepoint/input/*.xlsx
 data/gold_local/
 data/bronze_landing/
+
+# Vendored deps for the Streamlit app — created by vendor.sh, not committed
+apps/quality_team_intelligence/quality_core/
+apps/quality_team_intelligence/schemas/
+apps/quality_team_intelligence/generate_quality_data.py
