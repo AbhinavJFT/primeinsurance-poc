@@ -1394,7 +1394,6 @@ def _list_sessions() -> pd.DataFrame:
     return run_query(f"""
         SELECT
           session_id,
-          MIN(workbook)            AS first_workbook,
           COUNT(DISTINCT workbook) AS n_workbooks,
           COUNT(*)                 AS n_observations,
           ROUND(100.0 * SUM(CASE WHEN pass = true THEN 1 ELSE 0 END)
