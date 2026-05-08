@@ -1596,8 +1596,7 @@ else:
 st.markdown(
     f"""
     <div class='footer-note'>
-       <strong>SRF Quality Data Pipeline</strong> · catalog <code>{CATALOG}</code> ·
-       <a href='https://github.com/AbhinavJFT/primeinsurance-poc' target='_blank'>repo</a>
+       <strong>SRF Quality Data Pipeline</strong> · catalog <code>{CATALOG}</code>
     </div>
     """,
     unsafe_allow_html=True,
