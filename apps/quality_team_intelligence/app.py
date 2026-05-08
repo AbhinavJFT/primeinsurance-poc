@@ -680,30 +680,26 @@ def _sidebar():
 # ===========================================================================
 
 def _render_home_empty():
-    st.title("Process an SRF workbook")
+    st.title("Process SRF workbooks")
     st.markdown(
         "<div style='opacity:0.75;font-size:1.05rem;margin-bottom:1.5rem;'>"
-        "Generate synthetic SRF workbooks and run them through the "
-        "Databricks medallion pipeline. Each session runs in isolation — its "
-        "files live in a session subfolder, and its results are tagged with a "
-        "session ID so they don't mix with other runs."
+        "Generate a batch of SRF Quality team workbooks, then process them "
+        "through automated cleaning, validation, and analytics in one click."
         "</div>",
         unsafe_allow_html=True,
     )
 
     with st.container(border=True):
-        st.markdown("### Generate session files")
+        st.markdown("### Generate workbooks")
         st.markdown(
             "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
-            "How many synthetic workbooks should this session produce? "
-            "Files alternate between API, KSM, and Intermediates types. "
-            "Pipeline runs the deterministic cleaner (no LLM), so up to "
-            "100 files complete in a couple of minutes."
+            "Choose how many sample workbooks to generate. Files cover the "
+            "API, KSM, and Intermediates product lines."
             "</div>",
             unsafe_allow_html=True,
         )
         n_files = st.slider(
-            "Number of files",
+            "Number of workbooks",
             min_value=1, max_value=100, value=20, step=1,
             key="gen_count",
         )
@@ -727,7 +723,7 @@ def _render_home_empty():
 
 
 def _render_home_staged():
-    st.title("Session ready")
+    st.title("Workbooks ready")
     sid = st.session_state.get("session_id")
     n = st.session_state.get("session_n_files", 0)
     files = st.session_state.get("session_files", [])
@@ -737,9 +733,9 @@ def _render_home_staged():
         st.rerun()
 
     st.markdown(
-        f"Session **`{sid}`** has **{n} file(s)** uploaded to "
-        f"`{INPUT_VOLUME_BASE}/{sid}/`. Click **Run pipeline** to trigger "
-        "the medallion job, or **Discard session** to clean up and start over."
+        f"**{n} workbook(s)** generated and ready to process. "
+        "Preview them below, then click **Run pipeline** to clean and analyze, "
+        "or **Discard** to start over."
     )
 
     c1, c2 = st.columns([3, 1])
@@ -770,36 +766,32 @@ def _render_home_staged():
             st.rerun()
 
     st.markdown("&nbsp;")
-    st.markdown("### Input file preview")
+    st.markdown("### Preview")
     st.caption(
-        "Inspect any of the generated workbooks before triggering the pipeline. "
-        "Same Excel-shaped renderer as the Deliverables tab."
+        "Inspect any of the generated workbooks before processing."
     )
 
-    # Files are still cached locally under /tmp/qde_session/<sid>/ from the
-    # Generate step. Cheap reads, no Volume round-trip.
     local_dir = Path("/tmp/qde_session") / sid
     if not files:
-        st.info("No files in this session.")
+        st.info("No workbooks generated.")
         return
 
     file_choice = st.selectbox(
         "File", files, key="staged_file_pick",
-        help="Pick which input workbook to preview.",
+        help="Pick a workbook to preview.",
     )
     target = local_dir / file_choice
     if not target.exists():
         st.warning(
-            f"`{file_choice}` is not in /tmp on this app container "
-            "(probably restarted since Generate). Run pipeline still works — "
-            "the file is in the input volume."
+            "Preview is temporarily unavailable. You can still click "
+            "Run pipeline — your workbooks are safely uploaded."
         )
         return
     try:
         sheets = _list_sheets(target)
         sheet_choice = st.selectbox(
             "Sheet", sheets, key="staged_sheet_pick",
-            help="Pick which sheet of the chosen workbook to render.",
+            help="Pick a sheet to view.",
         )
         _render_xlsx_full(target, sheet_choice, height=620)
     except Exception as e:
@@ -919,10 +911,8 @@ def _render_home_running():
         header.markdown(
             f'<div style="{header_card_style}">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">'
-            f'<div><div style="{meta_label_style}">Session</div>'
+            f'<div><div style="{meta_label_style}">Batch ID</div>'
             f'<div style="{meta_value_style}">{sid}</div></div>'
-            f'<div><div style="{meta_label_style}">Run</div>'
-            f'<div style="{meta_value_style}">{run_id}</div></div>'
             f'<div><div style="{meta_label_style}">Elapsed</div>'
             f'<div style="font-size:1.1rem;color:#0F172A;font-weight:700;">{elapsed // 60}m {elapsed % 60}s</div></div>'
             f'</div></div>',
@@ -1066,10 +1056,10 @@ def _render_home_results():
     with a1:
         st.title("Results")
         st.caption(
-            f"Session **`{sid}`** &nbsp;·&nbsp; "
-            f"{len(obs):,} observations &nbsp;·&nbsp; "
-            f"{len(dq):,} DQ fixes &nbsp;·&nbsp; "
-            f"{len(mp):,} mapping decisions"
+            f"Batch **`{sid}`** &nbsp;·&nbsp; "
+            f"{len(obs):,} measurements &nbsp;·&nbsp; "
+            f"{len(dq):,} corrections &nbsp;·&nbsp; "
+            f"{len(mp):,} columns standardized"
         )
     with a2:
         if st.button("Run another", use_container_width=True, key="run_another"):
@@ -1114,11 +1104,12 @@ def _render_home_results():
 
 def _tab_cleaning(dq: pd.DataFrame):
     st.markdown(
-        "**Every cleaning rule that fired during this run.** "
-        "Each repair is logged with raw → repaired so any reviewer can audit."
+        "**Every correction made to the raw data.** "
+        "Each fix shows the original value, the cleaned value, and why — "
+        "so reviewers can audit the changes."
     )
     if dq.empty:
-        st.info("No DQ events recorded.")
+        st.info("No corrections needed for this batch.")
         return
 
     breakdown = dq.groupby(["rule", "severity"]).size().reset_index(name="issues")
@@ -1148,29 +1139,24 @@ def _tab_cleaning(dq: pd.DataFrame):
 
 def _tab_ai_mapping(mp: pd.DataFrame):
     st.markdown(
-        "**Column-name decisions made by the LLM column mapper** "
-        "(or the synonym matcher fallback when the foundation-model endpoint "
-        "isn't reachable). Each carries a confidence score and rationale."
+        "**Column standardization across all workbooks.** "
+        "Each row maps a raw column header to its canonical name with a "
+        "confidence score so reviewers can spot inconsistencies."
     )
     if mp.empty:
-        st.info("No mappings recorded.")
+        st.info("No standardization decisions recorded.")
         return
 
     visible = mp[mp["role"] != "ignored"].copy()
-    src_count = visible.groupby("source").size().reset_index(name="n")
     quarantine = visible[visible["confidence"] < 0.5].shape[0]
-    primary_source = src_count.sort_values("n", ascending=False).iloc[0]["source"] \
-        if not src_count.empty else "—"
 
-    s1, s2, s3 = st.columns(3)
-    s1.metric("Total decisions", f"{len(visible):,}")
-    s2.metric("Mapper", primary_source,
-              help="`llm` = foundation model fired; `mock_synonyms` = deterministic fallback")
-    s3.metric("Flagged for review", f"{quarantine}",
-              delta="confidence < 0.5", delta_color="off")
+    s1, s2 = st.columns(2)
+    s1.metric("Columns standardized", f"{len(visible):,}")
+    s2.metric("Needs review", f"{quarantine}",
+              delta="low confidence", delta_color="off")
 
     st.markdown("&nbsp;")
-    st.caption("Showing only high-confidence mappings (confidence ≥ 0.90).")
+    st.caption("Showing only high-confidence matches (confidence ≥ 0.90).")
     view = visible[visible["confidence"] >= 0.9].copy()
     view = view.sort_values("confidence")
     view["confidence"] = view["confidence"].round(2)
@@ -1183,10 +1169,10 @@ def _tab_ai_mapping(mp: pd.DataFrame):
 
 def _tab_analytics(obs: pd.DataFrame):
     st.markdown(
-        "**Compliance and trend views over the cleaned data from this run.**"
+        "**Compliance and trend views across the processed batch.**"
     )
     if obs.empty:
-        st.info("No observations available.")
+        st.info("No measurements available.")
         return
 
     # Pass rate by batch
@@ -1282,16 +1268,17 @@ def _download_volume_bytes(remote_path: str) -> bytes:
 
 def _tab_outputs_session(cleaned_dir: str, tidy_dir: str):
     st.markdown(
-        "**Both cleaned views are saved to this session's output folder.** "
-        "Same-format mirrors the input shape; tidy is the long-form analytics view."
+        "**Two cleaned views are produced for every batch.** "
+        "**Same format** keeps the original Excel layout for the Quality team; "
+        "**Analytics view** flattens everything for reporting and dashboards."
     )
     sub_same, sub_tidy = st.tabs([
-        "Same-format (mirrors input)",
-        "Tidy long-form (analytics)",
+        "Same format (original layout)",
+        "Analytics view (flattened)",
     ])
 
     with sub_same:
-        st.caption(f"Folder: `{cleaned_dir}`")
+        st.caption("Cleaned workbooks — same layout as input, ready to drop back into SharePoint.")
         files = _list_volume_xlsx(cleaned_dir)
         if not files:
             st.info("No same-format outputs found.")
@@ -1346,21 +1333,16 @@ def _tab_outputs_session(cleaned_dir: str, tidy_dir: str):
                     )
                     cL, cR = st.columns(2, gap="small")
                     with cL:
-                        st.markdown("**Input (raw)**")
-                        st.caption(f"`{input_remote}`")
+                        st.markdown("**Before — original**")
                         _render_xlsx_full(tmp_in, sheet, height=620)
                     with cR:
-                        st.markdown("**Output (cleaned)**")
-                        st.caption(f"`{sel['path']}`")
+                        st.markdown("**After — cleaned**")
                         _render_xlsx_full(tmp_out, sheet, height=620)
                 except Exception as e:
-                    st.warning(
-                        f"Compare unavailable: couldn't load input file "
-                        f"`{input_remote}` ({e})."
-                    )
+                    st.warning(f"Compare view unavailable: {e}")
 
     with sub_tidy:
-        st.caption(f"Folder: `{tidy_dir}`")
+        st.caption("Flattened analytics view — three sheets ready for reports and dashboards.")
         files = _list_volume_xlsx(tidy_dir)
         if not files:
             st.info("No tidy outputs found.")
@@ -1428,21 +1410,20 @@ def render_history():
     st.title("History")
     st.markdown(
         "<div style='opacity:0.75;font-size:1.0rem;margin-bottom:1rem;'>"
-        "Every session ever processed by the app. Pick one to re-open its "
-        "results."
+        "Every batch processed so far. Click a row, then open it to review."
         "</div>",
         unsafe_allow_html=True,
     )
 
     df = _list_sessions()
     if df.empty:
-        st.info("No sessions yet. Head to Home and process a workbook.")
+        st.info("No batches processed yet. Head to Home to start one.")
         return
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sessions", f"{len(df):,}")
+    k1.metric("Batches", f"{len(df):,}")
     k2.metric("Total workbooks", f"{int(df['n_workbooks'].sum()):,}")
-    k3.metric("Total observations", f"{int(df['n_observations'].sum()):,}")
+    k3.metric("Total measurements", f"{int(df['n_observations'].sum()):,}")
     k4.metric("Avg pass rate", f"{df['pass_rate_pct'].mean():.1f}%")
 
     st.markdown("&nbsp;")
@@ -1456,9 +1437,9 @@ def render_history():
         sel_sid = df.iloc[sel_rows[0]]["session_id"]
         c1, c2 = st.columns([3, 1])
         with c1:
-            st.info(f"Selected session **{sel_sid}**.")
+            st.info(f"Selected batch **{sel_sid}**.")
         with c2:
-            if st.button("Open this session", type="primary",
+            if st.button("Open this batch", type="primary",
                          use_container_width=True, key="open_hist"):
                 st.session_state.session_id = sel_sid
                 st.session_state.view = "home"
@@ -1474,47 +1455,43 @@ def render_dashboard():
     st.title("Dashboard")
     st.markdown(
         "<div style='opacity:0.75;font-size:1.0rem;margin-bottom:1rem;'>"
-        "Comprehensive analytics — both this app's interactive runs <em>and</em> "
-        "the batch pipeline's bronze/silver/gold layer."
+        "Quality metrics across every batch processed."
         "</div>",
         unsafe_allow_html=True,
     )
 
     # ── Section A: App sessions (queried from gold) ─────────────────────────
     sessions = _list_sessions()
-    st.markdown("## App sessions")
+    st.markdown("## Recent batches")
     if sessions.empty:
-        st.info("No app sessions yet.")
+        st.info("No batches processed yet.")
     else:
         df = sessions.copy()
         a1, a2, a3, a4 = st.columns(4)
-        a1.metric("Sessions", f"{len(df):,}")
+        a1.metric("Batches", f"{len(df):,}")
         a2.metric("Total workbooks", f"{int(df['n_workbooks'].sum()):,}")
-        a3.metric("Total observations", f"{int(df['n_observations'].sum()):,}")
+        a3.metric("Total measurements", f"{int(df['n_observations'].sum()):,}")
         a4.metric("Avg pass %", f"{df['pass_rate_pct'].mean():.1f}%")
 
         st.markdown("&nbsp;")
 
         c1, c2 = st.columns(2, gap="large")
         with c1:
-            st.markdown("**Workbooks per session**")
+            st.markdown("**Workbooks per batch**")
             ser = df.set_index("session_id")["n_workbooks"].sort_index()
             if not ser.empty:
                 st.bar_chart(ser, color=PRIMARY, height=260)
         with c2:
-            st.markdown("**Pass rate per session**")
+            st.markdown("**Pass rate per batch**")
             ser = df.set_index("session_id")["pass_rate_pct"].sort_index()
             if not ser.empty:
                 st.line_chart(ser, color=ACCENT_GREEN, height=260)
 
     st.markdown("---")
 
-    # ── Section B: Batch pipeline ───────────────────────────────────────────
-    st.markdown("## Batch pipeline (bronze / silver / gold)")
-    st.caption(
-        "Aggregates from the deployed pipeline tables — these are populated by "
-        "the scheduled medallion job (`./deploy.sh` runs)."
-    )
+    # ── Section B: All-time totals ──────────────────────────────────────────
+    st.markdown("## All-time totals")
+    st.caption("Aggregates across every batch ever processed.")
 
     try:
         batch_summary = run_query(f"""
@@ -1533,19 +1510,16 @@ def render_dashboard():
         batch_summary = pd.DataFrame()
 
     if batch_summary.empty:
-        st.info(
-            "Batch pipeline tables not reachable. Make sure the bundle is deployed "
-            "and the pipeline job has been run at least once."
-        )
+        st.info("Totals will appear here after the first batch is processed.")
         return
 
     row = batch_summary.iloc[0]
     b1, b2, b3, b4, b5, b6 = st.columns(6)
-    b1.metric("Files ingested", f"{int(row.files):,}")
-    b2.metric("Observations", f"{int(row.observations):,}")
-    b3.metric("DQ fixes", f"{int(row.fixes):,}")
-    b4.metric("AI mappings", f"{int(row.mappings):,}")
-    b5.metric("Spec violations", f"{int(row.violations):,}")
+    b1.metric("Files processed", f"{int(row.files):,}")
+    b2.metric("Measurements", f"{int(row.observations):,}")
+    b3.metric("Corrections made", f"{int(row.fixes):,}")
+    b4.metric("Columns standardized", f"{int(row.mappings):,}")
+    b5.metric("Out-of-spec readings", f"{int(row.violations):,}")
     b6.metric("Pass rate", f"{row.pass_rate}%")
 
     st.markdown("&nbsp;")
@@ -1553,7 +1527,7 @@ def render_dashboard():
     # Top spec violators + DQ rule breakdown
     cb1, cb2 = st.columns(2, gap="large")
     with cb1:
-        st.markdown("**Top spec violators (gold)**")
+        st.markdown("**Most violated specs**")
         try:
             tv = run_query(f"""
                 SELECT analyte_canonical, SUM(violation_count) AS violations
@@ -1568,7 +1542,7 @@ def render_dashboard():
             st.warning("Couldn't load spec violations.")
 
     with cb2:
-        st.markdown("**DQ rule breakdown (silver)**")
+        st.markdown("**Types of corrections applied**")
         try:
             dq_break = run_query(f"""
                 SELECT rule, COUNT(*) AS issues
@@ -1579,11 +1553,11 @@ def render_dashboard():
                 st.bar_chart(dq_break.set_index("rule")["issues"],
                              color=ACCENT_AMBER, height=320)
         except Exception:
-            st.warning("Couldn't load DQ rule breakdown.")
+            st.warning("Couldn't load corrections breakdown.")
 
     # Impurity trend
     st.markdown("&nbsp;")
-    st.markdown("**Impurity trend (avg value, gold.mv_impurity_trend)**")
+    st.markdown("**Impurity levels over time** (averaged across batches)")
     try:
         trend = run_query(f"""
             SELECT analyte_canonical, sample_date, avg_value
