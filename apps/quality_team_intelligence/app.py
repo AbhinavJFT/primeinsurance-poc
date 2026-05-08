@@ -1225,17 +1225,49 @@ def _tab_analytics(obs: pd.DataFrame):
 
     st.markdown("&nbsp;")
 
-    # Impurity trend
-    st.markdown("#### Impurity trend (avg value over sample date)")
-    if "sample_date" in obs.columns:
+    # Trends over time — split into two charts because the main compound
+    # (assay) sits around 99% while impurities sit around 0.001%-0.1%, so
+    # plotting them on the same axis hides the impurity variation.
+    st.markdown("#### Trends over time")
+
+    if "sample_date" in obs.columns and "spec_min" in obs.columns:
         with_dates = obs.dropna(subset=["sample_date", "value"]).copy()
         with_dates["sample_date"] = pd.to_datetime(with_dates["sample_date"])
-        if not with_dates.empty:
-            pivot = with_dates.pivot_table(
+
+        # Min-bound analytes are the main compound / assay (e.g. TFMBA,
+        # KSM Assay, Main Compound) — high values, "higher is better".
+        assay_df = with_dates[with_dates["spec_min"].notna()]
+        # Everything else is an impurity or unmapped column — small values,
+        # "lower is better".
+        impurity_df = with_dates[with_dates["spec_min"].isna()]
+
+        st.markdown("**Main compound purity** &nbsp; "
+                    "<span style='opacity:0.6;font-size:0.85rem;'>"
+                    "higher is better; spec is typically ≥ 98.5%</span>",
+                    unsafe_allow_html=True)
+        if not assay_df.empty:
+            pivot = assay_df.pivot_table(
                 index="sample_date", columns="analyte_canonical",
                 values="value", aggfunc="mean",
             )
-            st.line_chart(pivot, height=380)
+            st.line_chart(pivot, height=300, color=ACCENT_GREEN)
+        else:
+            st.caption("No main-compound measurements in this batch.")
+
+        st.markdown("&nbsp;")
+
+        st.markdown("**Impurity levels** &nbsp; "
+                    "<span style='opacity:0.6;font-size:0.85rem;'>"
+                    "lower is better; specs are typically ≤ 0.10–0.50%</span>",
+                    unsafe_allow_html=True)
+        if not impurity_df.empty:
+            pivot = impurity_df.pivot_table(
+                index="sample_date", columns="analyte_canonical",
+                values="value", aggfunc="mean",
+            )
+            st.line_chart(pivot, height=300)
+        else:
+            st.caption("No impurity measurements in this batch.")
 
 
 def _list_volume_xlsx(vol_dir: str) -> list[dict]:
