@@ -14,11 +14,17 @@ dbutils.widgets.text("catalog", "quality_de")
 dbutils.widgets.text("volume_input", "sharepoint_input")
 dbutils.widgets.text("volume_output", "sharepoint_output")
 dbutils.widgets.text("session_id", "legacy_main_pipeline")
+# Service principal that backs the Streamlit app. When set, this notebook
+# grants it all UC privileges it needs to upload session files, query the
+# medallion tables, and clean up sessions. Empty = skip grants (e.g. when
+# running locally or before the app exists).
+dbutils.widgets.text("app_service_principal", "")
 
 CATALOG = dbutils.widgets.get("catalog")
 VOL_IN = dbutils.widgets.get("volume_input")
 VOL_OUT = dbutils.widgets.get("volume_output")
 SESSION_ID = dbutils.widgets.get("session_id")
+APP_SP = dbutils.widgets.get("app_service_principal").strip()
 
 # COMMAND ----------
 
@@ -84,3 +90,42 @@ else:
 # COMMAND ----------
 
 print("setup complete — catalog, schemas, volumes ready")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Grant app service principal the privileges it needs
+# MAGIC
+# MAGIC Skipped when `app_service_principal` widget is empty. Idempotent —
+# MAGIC GRANT is a no-op if the privilege is already held.
+
+# COMMAND ----------
+
+if APP_SP:
+    grants = [
+        f"GRANT USE CATALOG ON CATALOG {CATALOG} TO `{APP_SP}`",
+        f"GRANT USE SCHEMA ON SCHEMA {CATALOG}.bronze TO `{APP_SP}`",
+        f"GRANT USE SCHEMA ON SCHEMA {CATALOG}.silver TO `{APP_SP}`",
+        f"GRANT USE SCHEMA ON SCHEMA {CATALOG}.gold TO `{APP_SP}`",
+        f"GRANT SELECT ON SCHEMA {CATALOG}.bronze TO `{APP_SP}`",
+        f"GRANT SELECT ON SCHEMA {CATALOG}.silver TO `{APP_SP}`",
+        f"GRANT SELECT ON SCHEMA {CATALOG}.gold TO `{APP_SP}`",
+        f"GRANT MODIFY ON SCHEMA {CATALOG}.bronze TO `{APP_SP}`",
+        f"GRANT MODIFY ON SCHEMA {CATALOG}.silver TO `{APP_SP}`",
+        f"GRANT MODIFY ON SCHEMA {CATALOG}.gold TO `{APP_SP}`",
+        f"GRANT WRITE VOLUME ON VOLUME {CATALOG}.bronze.{VOL_IN} TO `{APP_SP}`",
+        f"GRANT READ VOLUME  ON VOLUME {CATALOG}.bronze.{VOL_IN} TO `{APP_SP}`",
+        f"GRANT READ VOLUME  ON VOLUME {CATALOG}.bronze.{VOL_OUT} TO `{APP_SP}`",
+    ]
+    for sql in grants:
+        try:
+            spark.sql(sql)
+            print(f"  ✓ {sql}")
+        except Exception as e:
+            print(f"  ! {sql}  →  {e}")
+    print(f"\nApp SP `{APP_SP}` granted UC privileges on {CATALOG}.")
+    print("NOTE: CAN_MANAGE_RUN on the pipeline job is not a UC privilege —")
+    print("      grant it via: databricks api patch /api/2.0/permissions/jobs/<id> ...")
+    print("      or the Jobs UI → Permissions → add the SP with 'Can Manage Run'.")
+else:
+    print("app_service_principal widget empty — skipping grants.")

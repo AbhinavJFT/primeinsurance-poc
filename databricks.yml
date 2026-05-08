@@ -22,6 +22,12 @@ variables:
   warehouse_id:
     description: SQL Warehouse used by dashboards / Genie / Lakebase queries
     default: 2de6a251cf2870eb   # Serverless Starter Warehouse on newaccount
+  app_service_principal:
+    description: |
+      Streamlit app's service principal ID. When set, 00_setup grants this
+      SP the UC privileges it needs (USE/SELECT/MODIFY on schemas, WRITE
+      VOLUME on input, READ VOLUME on output). Empty = skip grants.
+    default: c06ccb93-a962-4070-b402-c0094f811f15
 
 resources:
   jobs:
@@ -41,6 +47,7 @@ resources:
               volume_input: ${var.volume_input}
               volume_output: ${var.volume_output}
               session_id: "legacy_main_pipeline"
+              app_service_principal: ${var.app_service_principal}
           environment_key: default
 
         - task_key: bronze_ingest
