@@ -1331,7 +1331,7 @@ def render_dashboard():
 
         a1, a2, a3, a4, a5 = st.columns(5)
         a1.metric("Runs", f"{len(df):,}")
-        a2.metric("Files cleaned", f"{df['file_name'].nunique():,}")
+        a2.metric("Files cleaned", f"{df['file_name'].count():,}")
         a3.metric("Total obs", f"{df['n_observations'].sum():,}")
         a4.metric("Total fixes", f"{df['n_dq_issues'].sum():,}")
         a5.metric("Avg pass %", f"{df['pass_rate_pct'].mean():.1f}%")
