@@ -1249,25 +1249,68 @@ def _tab_outputs_session(cleaned_dir: str, tidy_dir: str):
         if not files:
             st.info("No same-format outputs found.")
         else:
-            choice = st.selectbox("File", [f["name"] for f in files],
-                                  key="same_pick")
+            top_l, top_r = st.columns([3, 2])
+            with top_l:
+                choice = st.selectbox(
+                    "File", [f["name"] for f in files], key="same_pick",
+                )
+            with top_r:
+                st.markdown("&nbsp;")
+                compare = st.checkbox(
+                    "Compare with original input",
+                    value=False, key="same_compare",
+                    help="Show the raw input file (left) and the cleaned "
+                         "output (right) side-by-side, sharing a sheet picker.",
+                )
+
             sel = next(f for f in files if f["name"] == choice)
-            data = _download_volume_bytes(sel["path"])
+            output_data = _download_volume_bytes(sel["path"])
             st.download_button(
-                "Download", data=data, file_name=sel["name"],
+                "Download", data=output_data, file_name=sel["name"],
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True, key="dl_same",
                 type="primary",
             )
-            tmp = Path("/tmp/qde_preview") / sel["name"]
-            tmp.parent.mkdir(exist_ok=True)
-            tmp.write_bytes(data)
-            try:
-                sheets = _list_sheets(tmp)
-                sheet = st.selectbox("Sheet", sheets, key="same_sheet_pick")
-                _render_xlsx_full(tmp, sheet, height=620)
-            except Exception as e:
-                st.warning(f"Preview unavailable: {e}")
+            tmp_out = Path("/tmp/qde_preview") / f"out_{sel['name']}"
+            tmp_out.parent.mkdir(exist_ok=True)
+            tmp_out.write_bytes(output_data)
+
+            if not compare:
+                try:
+                    sheets = _list_sheets(tmp_out)
+                    sheet = st.selectbox(
+                        "Sheet", sheets, key="same_sheet_pick",
+                    )
+                    _render_xlsx_full(tmp_out, sheet, height=620)
+                except Exception as e:
+                    st.warning(f"Preview unavailable: {e}")
+            else:
+                # Pull the matching input file from the input volume
+                # (same filename, sessions/<sid>/<filename>).
+                sid = st.session_state.get("session_id")
+                input_remote = f"{INPUT_VOLUME_BASE}/{sid}/{sel['name']}"
+                try:
+                    input_data = _download_volume_bytes(input_remote)
+                    tmp_in = Path("/tmp/qde_preview") / f"in_{sel['name']}"
+                    tmp_in.write_bytes(input_data)
+                    sheets = _list_sheets(tmp_in)
+                    sheet = st.selectbox(
+                        "Sheet", sheets, key="same_sheet_pick_compare",
+                    )
+                    cL, cR = st.columns(2, gap="small")
+                    with cL:
+                        st.markdown("**Input (raw)**")
+                        st.caption(f"`{input_remote}`")
+                        _render_xlsx_full(tmp_in, sheet, height=620)
+                    with cR:
+                        st.markdown("**Output (cleaned)**")
+                        st.caption(f"`{sel['path']}`")
+                        _render_xlsx_full(tmp_out, sheet, height=620)
+                except Exception as e:
+                    st.warning(
+                        f"Compare unavailable: couldn't load input file "
+                        f"`{input_remote}` ({e})."
+                    )
 
     with sub_tidy:
         st.caption(f"Folder: `{tidy_dir}`")
