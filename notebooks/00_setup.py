@@ -13,10 +13,12 @@
 dbutils.widgets.text("catalog", "quality_de")
 dbutils.widgets.text("volume_input", "sharepoint_input")
 dbutils.widgets.text("volume_output", "sharepoint_output")
+dbutils.widgets.text("session_id", "legacy_main_pipeline")
 
 CATALOG = dbutils.widgets.get("catalog")
 VOL_IN = dbutils.widgets.get("volume_input")
 VOL_OUT = dbutils.widgets.get("volume_output")
+SESSION_ID = dbutils.widgets.get("session_id")
 
 # COMMAND ----------
 
@@ -50,18 +52,24 @@ sys.path.insert(0, "../")
 
 from generate_quality_data import generate
 
-# Generate to a local temp dir first — UC Volumes are FUSE-mounted and don't
-# support the random seek() openpyxl needs while writing .xlsx files. We then
-# stream-copy each finished file into the Volume.
-input_root = Path(f"/Volumes/{CATALOG}/bronze/{VOL_IN}")
-input_root.mkdir(parents=True, exist_ok=True)
+# Demo seeding only applies to the legacy main pipeline. App-driven
+# session runs upload their files directly to /sessions/<session_id>/ via
+# the Streamlit app — no seeding needed here.
+if SESSION_ID == "legacy_main_pipeline":
+    # Generate to a local temp dir first — UC Volumes are FUSE-mounted and
+    # don't support the random seek() openpyxl needs while writing .xlsx
+    # files. We then stream-copy each finished file into the Volume.
+    input_root = Path(f"/Volumes/{CATALOG}/bronze/{VOL_IN}")
+    input_root.mkdir(parents=True, exist_ok=True)
 
-with tempfile.TemporaryDirectory() as tmp:
-    written = generate(tmp, seed=43)
-    for p in written:
-        target = input_root / p.name
-        shutil.copy(p, target)
-        print(f"  wrote {target}  ({target.stat().st_size:,} bytes)")
+    with tempfile.TemporaryDirectory() as tmp:
+        written = generate(tmp, seed=43)
+        for p in written:
+            target = input_root / p.name
+            shutil.copy(p, target)
+            print(f"  wrote {target}  ({target.stat().st_size:,} bytes)")
+else:
+    print(f"  (session-scoped run for {SESSION_ID}; skipping demo seeding)")
 
 # COMMAND ----------
 
