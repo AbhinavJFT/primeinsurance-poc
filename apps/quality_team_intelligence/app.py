@@ -1,9 +1,9 @@
-"""Quality Team Intelligence — interactive Streamlit app.
+"""SRF Quality Data — interactive Streamlit app for the SRF POC.
 
 Three top-level views via the sidebar:
 
-  Home      — generate N synthetic Quality team workbooks, upload them
-              to a session-scoped subfolder in the input volume, trigger
+  Home      — generate N synthetic SRF workbooks, upload them to a
+              session-scoped subfolder in the input volume, trigger
               the medallion pipeline job, stream live status, then render
               the cleaned outputs filtered to that session.
 
@@ -82,7 +82,7 @@ NEUTRAL = "#475569"
 # ===========================================================================
 
 st.set_page_config(
-    page_title="Quality Team Intelligence",
+    page_title="SRF Quality Data",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -597,8 +597,8 @@ def _render_xlsx_full(path: Path, sheet_name: str, height: int = 560):
 def _sidebar():
     with st.sidebar:
         st.markdown(
-            "<div style='font-size:1.3rem;font-weight:700;'>Quality Team</div>"
-            "<div style='font-size:1.0rem;font-weight:600;opacity:0.7;'>Intelligence</div>",
+            "<div style='font-size:1.5rem;font-weight:800;letter-spacing:1px;'>SRF</div>"
+            "<div style='font-size:0.95rem;font-weight:600;opacity:0.7;'>Quality Data Pipeline</div>",
             unsafe_allow_html=True,
         )
         st.markdown("---")
@@ -622,7 +622,7 @@ def _sidebar():
 
         st.markdown(
             "<div class='footer-note' style='padding-top:1rem;'>"
-            "Self-contained ADF mock<br>SharePoint round-trip<br>AI-driven cleaning"
+            "SRF POC<br>SharePoint round-trip<br>Medallion pipeline"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -633,10 +633,10 @@ def _sidebar():
 # ===========================================================================
 
 def _render_home_empty():
-    st.title("Process a Quality team workbook")
+    st.title("Process an SRF workbook")
     st.markdown(
         "<div style='opacity:0.75;font-size:1.05rem;margin-bottom:1.5rem;'>"
-        "Generate synthetic Quality team workbooks and run them through the "
+        "Generate synthetic SRF workbooks and run them through the "
         "Databricks medallion pipeline. Each session runs in isolation — its "
         "files live in a session subfolder, and its results are tagged with a "
         "session ID so they don't mix with other runs."
@@ -1575,7 +1575,7 @@ else:
 st.markdown(
     f"""
     <div class='footer-note'>
-       <strong>Quality Team Intelligence</strong> · catalog <code>{CATALOG}</code> ·
+       <strong>SRF Quality Data Pipeline</strong> · catalog <code>{CATALOG}</code> ·
        <a href='https://github.com/AbhinavJFT/primeinsurance-poc' target='_blank'>repo</a>
     </div>
     """,
