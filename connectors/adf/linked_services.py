@@ -135,13 +135,19 @@ class DeltaBackend:
     def register_workbook_manifest(
         self, rows: list[dict[str, Any]], catalog: str | None = None,
     ) -> str:
-        """Register one row per ingested workbook in bronze.raw_workbooks."""
+        """Register one row per ingested workbook in bronze.raw_workbooks.
+
+        Append mode + partitioned by session_id so multiple app sessions can
+        coexist in the same table. Each row carries a ``session_id`` value
+        threaded through from the pipeline parameters (added in
+        ``_register_workbook_manifest``)."""
         catalog = catalog or self.catalog
         if self.is_databricks():
             df = self.spark.createDataFrame(rows)
             (df.write.format("delta")
-                .mode("overwrite")
-                .option("overwriteSchema", "true")
+                .mode("append")
+                .option("mergeSchema", "true")
+                .partitionBy("session_id")
                 .saveAsTable(f"{catalog}.bronze.raw_workbooks"))
             return f"{catalog}.bronze.raw_workbooks"
 

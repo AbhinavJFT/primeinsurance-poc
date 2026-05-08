@@ -316,6 +316,7 @@ def _register_workbook_manifest(activity: dict[str, Any], ctx: RunContext) -> di
 
     catalog = ctx.pipeline_parameters.get("catalog", "quality_de")
     volume = ctx.pipeline_parameters.get("volume", "sharepoint_input")
+    session_id = ctx.pipeline_parameters.get("session_id", "legacy_main_pipeline")
 
     ls_db = next(
         ls for ls in ctx.linked_services.values()
@@ -333,6 +334,7 @@ def _register_workbook_manifest(activity: dict[str, Any], ctx: RunContext) -> di
         "ingest_ts": now_utc(),
         "catalog": catalog,
         "volume": volume,
+        "session_id": session_id,
     }
     ctx.activity_outputs.setdefault("_manifest_buffer", []).append(row)
     return {"buffered": True, "workbook": name}

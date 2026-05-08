@@ -20,8 +20,10 @@
 
 dbutils.widgets.text("catalog", "quality_de")
 dbutils.widgets.text("volume_input", "sharepoint_input")
+dbutils.widgets.text("session_id", "legacy_main_pipeline")
 CATALOG = dbutils.widgets.get("catalog")
 VOL_IN = dbutils.widgets.get("volume_input")
+SESSION_ID = dbutils.widgets.get("session_id")
 
 # COMMAND ----------
 
@@ -29,16 +31,30 @@ import os
 import sys
 sys.path.insert(0, "../")
 
+# When invoked for an app session, scope ingest to the session subfolder
+# under the input volume. The legacy main pipeline keeps reading from the
+# volume root (back-compat — sessions/ subfolder is invisible to it).
+if SESSION_ID == "legacy_main_pipeline":
+    INGEST_VOLUME = VOL_IN
+else:
+    INGEST_VOLUME = f"{VOL_IN}/sessions/{SESSION_ID}"
+
 # Bind the SharePointMock root to the UC Volume tree on Databricks; the
-# dataset folderPath "input" is then aliased to the actual volume name.
+# dataset folderPath "input" is then aliased to the (possibly session-
+# scoped) volume name.
 os.environ["SHAREPOINT_MOCK_ROOT"] = f"/Volumes/{CATALOG}/bronze"
-os.environ["SHAREPOINT_FOLDER_ALIAS_input"] = VOL_IN
+os.environ["SHAREPOINT_FOLDER_ALIAS_input"] = INGEST_VOLUME
 
 from connectors.adf import run_pipeline
 
 result = run_pipeline(
     "pl_ingest_sp_to_bronze",
-    parameters={"catalog": CATALOG, "volume": VOL_IN, "site": "QualityTeam"},
+    parameters={
+        "catalog": CATALOG,
+        "volume": INGEST_VOLUME,
+        "site": "QualityTeam",
+        "session_id": SESSION_ID,
+    },
     spark=spark,
 )
 
