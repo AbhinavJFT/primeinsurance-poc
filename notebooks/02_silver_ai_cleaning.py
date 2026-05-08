@@ -22,11 +22,16 @@ dbutils.widgets.text("catalog", "quality_de")
 dbutils.widgets.text("volume_input", "sharepoint_input")
 dbutils.widgets.text("llm_endpoint", "databricks-gpt-oss-20b")
 dbutils.widgets.text("session_id", "legacy_main_pipeline")
+# Switch to "false" to skip the LLM mapper entirely and use the fast
+# deterministic synonym matcher (`mock_synonyms`) for every sheet.
+# Useful when the FM endpoint is rate-limiting or when you want quick runs.
+dbutils.widgets.text("use_llm", "false")
 
 CATALOG = dbutils.widgets.get("catalog")
 VOL_IN = dbutils.widgets.get("volume_input")
 ENDPOINT = dbutils.widgets.get("llm_endpoint")
 SESSION_ID = dbutils.widgets.get("session_id")
+USE_LLM = dbutils.widgets.get("use_llm").strip().lower() in ("1", "true", "yes")
 
 # COMMAND ----------
 
@@ -39,19 +44,24 @@ sys.path.insert(0, "../")
 from quality_core import process_workbook
 
 # Build the LLM client — Databricks provides DATABRICKS_HOST / TOKEN automatically inside notebooks.
+# Skipped entirely when use_llm widget is "false" (fast mode using the
+# deterministic synonym matcher).
 llm_client = None
-try:
-    from openai import OpenAI
-    host = (spark.conf.get("spark.databricks.workspaceUrl", None)
-            or os.environ.get("DATABRICKS_HOST"))
-    token = (dbutils.notebook.entry_point.getDbutils().notebook().getContext()
-             .apiToken().get())
-    if host and token and os.environ.get("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
-        host = host if host.startswith("http") else f"https://{host}"
-        llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
-        print(f"LLM mapper enabled — endpoint={ENDPOINT}")
-except Exception as e:
-    print(f"LLM client unavailable, falling back to mock_synonyms: {e}")
+if not USE_LLM:
+    print("use_llm=false — skipping LLM mapper, using mock_synonyms for every sheet.")
+else:
+    try:
+        from openai import OpenAI
+        host = (spark.conf.get("spark.databricks.workspaceUrl", None)
+                or os.environ.get("DATABRICKS_HOST"))
+        token = (dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+                 .apiToken().get())
+        if host and token and os.environ.get("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
+            host = host if host.startswith("http") else f"https://{host}"
+            llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
+            print(f"LLM mapper enabled — endpoint={ENDPOINT}")
+    except Exception as e:
+        print(f"LLM client unavailable, falling back to mock_synonyms: {e}")
 
 # COMMAND ----------
 

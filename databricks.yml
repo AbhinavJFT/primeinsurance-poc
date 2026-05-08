@@ -71,6 +71,9 @@ resources:
               volume_input: ${var.volume_input}
               llm_endpoint: ${var.llm_endpoint}
               session_id: "legacy_main_pipeline"
+              # "false" = skip LLM mapper entirely (fast, deterministic).
+              # Flip to "true" once the FM endpoint is provisioned-throughput.
+              use_llm: "false"
           environment_key: default
 
         - task_key: gold_curated
