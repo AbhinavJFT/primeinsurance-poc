@@ -740,7 +740,7 @@ def _render_home_files_loaded():
     cur = st.session_state.selected_file
     cur_idx = file_names.index(cur.name) if cur and cur.name in file_names else 0
 
-    c1, c2, c3 = st.columns([3, 1, 1])
+    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
     with c1:
         sel = st.selectbox(
             "Workbook to process", file_names, index=cur_idx, key="file_picker",
@@ -751,6 +751,19 @@ def _render_home_files_loaded():
         st.markdown("&nbsp;")
         st.metric("Available", f"{len(files)}", label_visibility="visible")
     with c3:
+        st.markdown("&nbsp;")
+        cur_file = st.session_state.selected_file
+        if cur_file and cur_file.exists():
+            st.download_button(
+                label="⬇️ Download",
+                data=cur_file.read_bytes(),
+                file_name=cur_file.name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="dl_selected",
+                help=f"Download {cur_file.name}",
+            )
+    with c4:
         st.markdown("&nbsp;")
         if st.button("Clear / restart", use_container_width=True, key="reset_home"):
             st.session_state.stage = "empty"
