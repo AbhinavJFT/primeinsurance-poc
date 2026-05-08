@@ -203,7 +203,9 @@ def _copy_sharepoint_to_volume(
 def _copy_delta_to_sharepoint_xlsx(
     activity, ctx, src_backend, src_ds, src_params, dst_backend, dst_ds, dst_params,
 ):
-    """Build a 3-sheet xlsx and upload to SharePoint /output."""
+    """Build a 3-sheet xlsx and upload to SharePoint /output. Honors a
+    ``subfolder`` pipeline parameter (e.g. ``sessions/<sid>/transformed``)
+    and a ``session_id`` parameter for filtering source rows."""
     workbook_name = src_params.get("workbook")
     if not workbook_name:
         raise ValueError("Delta→SharePoint copy requires dataset parameter 'workbook'")
@@ -214,11 +216,18 @@ def _copy_delta_to_sharepoint_xlsx(
     primary = src_ds["properties"]["typeProperties"]
     primary_table = f"{primary['database']}.{primary['table']}"
 
+    session_id = ctx.pipeline_parameters.get("session_id")
+    fetch_session = None if session_id == "legacy_main_pipeline" else session_id
+
     sheets: dict[str, tuple[list[str], list[list[Any]]]] = {}
-    sheets["observations"] = src_backend.fetch_for_workbook(primary_table, workbook_name)
+    sheets["observations"] = src_backend.fetch_for_workbook(
+        primary_table, workbook_name, session_id=fetch_session,
+    )
     for sheet_name, ref in companions.items():
         table = f"{ref['database']}.{ref['table']}"
-        sheets[sheet_name] = src_backend.fetch_for_workbook(table, workbook_name)
+        sheets[sheet_name] = src_backend.fetch_for_workbook(
+            table, workbook_name, session_id=fetch_session,
+        )
 
     out_loc = dst_ds["properties"]["typeProperties"]["location"]
     out_folder = evaluate(out_loc["folderPath"], ctx.expr_ctx(dst_params))
@@ -226,10 +235,16 @@ def _copy_delta_to_sharepoint_xlsx(
         out_loc.get("fileName", ""), ctx.expr_ctx(dst_params)
     )
 
+    # Optional pipeline-level subfolder (e.g. sessions/<sid>/transformed).
+    # SharePointMock.upload_file accepts a slash-separated name and creates
+    # subdirectories as needed.
+    subfolder = ctx.pipeline_parameters.get("subfolder", "") or ""
+    upload_name = f"{subfolder}/{out_name}" if subfolder else out_name
+
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / out_name
         _build_xlsx(staged, sheets)
-        uploaded = dst_backend.upload_file(out_folder, staged, name=out_name)
+        uploaded = dst_backend.upload_file(out_folder, staged, name=upload_name)
 
     total_rows = sum(len(rows) for _, rows in sheets.values())
     ctx.emit(
@@ -277,9 +292,13 @@ def execute_lookup(activity: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
     # interprets the *intent*: distinct workbooks from the primary table.
     table = f"{ds_json['properties']['typeProperties']['database']}." \
             f"{ds_json['properties']['typeProperties']['table']}"
-    rows = backend.lookup_distinct_workbooks(table)
+    session_id = ctx.pipeline_parameters.get("session_id")
+    if session_id == "legacy_main_pipeline":
+        session_id = None  # legacy path lists across all sessions
+    rows = backend.lookup_distinct_workbooks(table, session_id=session_id)
 
-    ctx.emit(f"  [Lookup] {table} → {len(rows)} distinct workbook(s)")
+    scope = f" (session={session_id})" if session_id else ""
+    ctx.emit(f"  [Lookup] {table}{scope} → {len(rows)} distinct workbook(s)")
     return {"value": rows, "count": len(rows), "firstRow": rows[0] if rows else None}
 
 
@@ -316,6 +335,7 @@ def _register_workbook_manifest(activity: dict[str, Any], ctx: RunContext) -> di
 
     catalog = ctx.pipeline_parameters.get("catalog", "quality_de")
     volume = ctx.pipeline_parameters.get("volume", "sharepoint_input")
+    session_id = ctx.pipeline_parameters.get("session_id", "legacy_main_pipeline")
 
     ls_db = next(
         ls for ls in ctx.linked_services.values()
@@ -333,6 +353,7 @@ def _register_workbook_manifest(activity: dict[str, Any], ctx: RunContext) -> di
         "ingest_ts": now_utc(),
         "catalog": catalog,
         "volume": volume,
+        "session_id": session_id,
     }
     ctx.activity_outputs.setdefault("_manifest_buffer", []).append(row)
     return {"buffered": True, "workbook": name}
@@ -377,11 +398,14 @@ def _build_same_format_xlsx(activity: dict[str, Any], ctx: RunContext) -> dict[s
     if not isinstance(db_backend, DeltaBackend):
         raise RuntimeError("DeltaBackend resolution failed")
 
+    session_id = ctx.pipeline_parameters.get("session_id")
+    fetch_session = None if session_id == "legacy_main_pipeline" else session_id
+
     obs_headers, obs_rows = db_backend.fetch_for_workbook(
-        f"silver.observations_long", workbook_name,
+        f"silver.observations_long", workbook_name, session_id=fetch_session,
     )
     map_headers, map_rows = db_backend.fetch_for_workbook(
-        f"silver.column_mapping_log", workbook_name,
+        f"silver.column_mapping_log", workbook_name, session_id=fetch_session,
     )
 
     # Stage the input + output xlsx in a tmp dir; then upload the cleaned

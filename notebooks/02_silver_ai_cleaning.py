@@ -21,10 +21,17 @@
 dbutils.widgets.text("catalog", "quality_de")
 dbutils.widgets.text("volume_input", "sharepoint_input")
 dbutils.widgets.text("llm_endpoint", "databricks-gpt-oss-20b")
+dbutils.widgets.text("session_id", "legacy_main_pipeline")
+# Switch to "false" to skip the LLM mapper entirely and use the fast
+# deterministic synonym matcher (`mock_synonyms`) for every sheet.
+# Useful when the FM endpoint is rate-limiting or when you want quick runs.
+dbutils.widgets.text("use_llm", "false")
 
 CATALOG = dbutils.widgets.get("catalog")
 VOL_IN = dbutils.widgets.get("volume_input")
 ENDPOINT = dbutils.widgets.get("llm_endpoint")
+SESSION_ID = dbutils.widgets.get("session_id")
+USE_LLM = dbutils.widgets.get("use_llm").strip().lower() in ("1", "true", "yes")
 
 # COMMAND ----------
 
@@ -37,25 +44,37 @@ sys.path.insert(0, "../")
 from quality_core import process_workbook
 
 # Build the LLM client — Databricks provides DATABRICKS_HOST / TOKEN automatically inside notebooks.
+# Skipped entirely when use_llm widget is "false" (fast mode using the
+# deterministic synonym matcher).
 llm_client = None
-try:
-    from openai import OpenAI
-    host = (spark.conf.get("spark.databricks.workspaceUrl", None)
-            or os.environ.get("DATABRICKS_HOST"))
-    token = (dbutils.notebook.entry_point.getDbutils().notebook().getContext()
-             .apiToken().get())
-    if host and token and os.environ.get("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
-        host = host if host.startswith("http") else f"https://{host}"
-        llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
-        print(f"LLM mapper enabled — endpoint={ENDPOINT}")
-except Exception as e:
-    print(f"LLM client unavailable, falling back to mock_synonyms: {e}")
+if not USE_LLM:
+    print("use_llm=false — skipping LLM mapper, using mock_synonyms for every sheet.")
+else:
+    try:
+        from openai import OpenAI
+        host = (spark.conf.get("spark.databricks.workspaceUrl", None)
+                or os.environ.get("DATABRICKS_HOST"))
+        token = (dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+                 .apiToken().get())
+        if host and token and os.environ.get("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
+            host = host if host.startswith("http") else f"https://{host}"
+            llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
+            print(f"LLM mapper enabled — endpoint={ENDPOINT}")
+    except Exception as e:
+        print(f"LLM client unavailable, falling back to mock_synonyms: {e}")
 
 # COMMAND ----------
 
-INPUT_PATH = Path(f"/Volumes/{CATALOG}/bronze/{VOL_IN}")
+# Process only the files registered for this session in bronze. The legacy
+# main pipeline still scans the volume root via the bronze rows it produced.
+bronze_for_session = (
+    spark.table(f"{CATALOG}.bronze.raw_workbooks")
+         .filter(f"session_id = '{SESSION_ID}'")
+)
+input_paths = [Path(r.source_path) for r in bronze_for_session.collect()]
+
 results = []
-for p in sorted(INPUT_PATH.glob("*.xlsx")):
+for p in input_paths:
     print(f"processing {p.name}…")
     res = process_workbook(p, llm_client=llm_client)
     print(f"  {len(res.observations)} obs | {len(res.dq_issues)} dq | {len(res.mappings)} mappings")
@@ -77,31 +96,105 @@ obs_rows = [
      "spec_min": o.spec_min, "spec_max": o.spec_max,
      "spec_internal_min": o.spec_internal_min, "spec_internal_max": o.spec_internal_max,
      "pass": o.pass_, "raw_value": o.raw_value,
-     "mapping_confidence": o.mapping_confidence}
+     "mapping_confidence": o.mapping_confidence,
+     "session_id": SESSION_ID}
     for r in results for o in r.observations
 ]
 dq_rows = [
     {"workbook": d.workbook, "sheet": d.sheet, "row_seq": d.row_seq,
      "column": d.column, "rule": d.rule, "severity": d.severity,
      "raw_value": str(d.raw_value), "repaired_value": str(d.repaired_value),
-     "note": d.note}
+     "note": d.note,
+     "session_id": SESSION_ID}
     for r in results for d in r.dq_issues
 ]
 map_rows = [
     {"workbook": m.workbook, "sheet": m.sheet, "column_index": m.column_index,
      "raw_label": m.raw_label, "role": m.role, "canonical": m.canonical,
-     "confidence": m.confidence, "rationale": m.rationale, "source": m.source}
+     "confidence": m.confidence, "rationale": m.rationale, "source": m.source,
+     "session_id": SESSION_ID}
     for r in results for m in r.mappings
 ]
 
-(spark.createDataFrame(obs_rows)
-   .write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+# Explicit schemas avoid Spark Connect's "CANNOT_DETERMINE_TYPE" error
+# when ANY column is all-None for a particular session (e.g. every meta
+# column fell below the rapidfuzz match threshold, or every observation
+# in a session had no spec bounds → pass=None across the board, etc.).
+# Inference is fragile; declaring types is the only robust answer.
+from pyspark.sql.types import (
+    StructType, StructField, StringType, LongType, DoubleType, BooleanType,
+    DateType,
+)
+
+OBS_SCHEMA = StructType([
+    StructField("workbook",            StringType(),  True),
+    StructField("sheet",               StringType(),  True),
+    StructField("row_seq",             LongType(),    True),
+    StructField("sample_date",         DateType(),    True),
+    StructField("sample_time",         StringType(),  True),
+    StructField("report_time",         StringType(),  True),
+    StructField("batch_no",            StringType(),  True),
+    StructField("instrument_id",       StringType(),  True),
+    StructField("stage",               StringType(),  True),
+    StructField("sample_form",         StringType(),  True),
+    StructField("appearance",          StringType(),  True),
+    StructField("appearance_solution", StringType(),  True),
+    StructField("analyte",             StringType(),  True),
+    StructField("analyte_canonical",   StringType(),  True),
+    StructField("column_index",        LongType(),    True),
+    StructField("rt",                  DoubleType(),  True),
+    StructField("rrt",                 DoubleType(),  True),
+    StructField("value",               DoubleType(),  True),
+    StructField("unit",                StringType(),  True),
+    StructField("spec_min",            DoubleType(),  True),
+    StructField("spec_max",            DoubleType(),  True),
+    StructField("spec_internal_min",   DoubleType(),  True),
+    StructField("spec_internal_max",   DoubleType(),  True),
+    StructField("pass",                BooleanType(), True),
+    StructField("raw_value",           StringType(),  True),
+    StructField("mapping_confidence",  DoubleType(),  True),
+    StructField("session_id",          StringType(),  False),
+])
+
+DQ_SCHEMA = StructType([
+    StructField("workbook",       StringType(), True),
+    StructField("sheet",          StringType(), True),
+    StructField("row_seq",        LongType(),   True),
+    StructField("column",         StringType(), True),
+    StructField("rule",           StringType(), True),
+    StructField("severity",       StringType(), True),
+    StructField("raw_value",      StringType(), True),
+    StructField("repaired_value", StringType(), True),
+    StructField("note",           StringType(), True),
+    StructField("session_id",     StringType(), False),
+])
+
+MAP_SCHEMA = StructType([
+    StructField("workbook",     StringType(), True),
+    StructField("sheet",        StringType(), True),
+    StructField("column_index", LongType(),   True),
+    StructField("raw_label",    StringType(), True),
+    StructField("role",         StringType(), True),
+    StructField("canonical",    StringType(), True),
+    StructField("confidence",   DoubleType(), True),
+    StructField("rationale",    StringType(), True),
+    StructField("source",       StringType(), True),
+    StructField("session_id",   StringType(), False),
+])
+
+# Append + mergeSchema + partition by session_id so multiple sessions
+# coexist in the same tables. App-side queries filter by session_id.
+(spark.createDataFrame(obs_rows, schema=OBS_SCHEMA)
+   .write.format("delta").mode("append").option("mergeSchema", "true")
+   .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.observations_long"))
-(spark.createDataFrame(dq_rows)
-   .write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+(spark.createDataFrame(dq_rows, schema=DQ_SCHEMA)
+   .write.format("delta").mode("append").option("mergeSchema", "true")
+   .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.dq_issues"))
-(spark.createDataFrame(map_rows)
-   .write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+(spark.createDataFrame(map_rows, schema=MAP_SCHEMA)
+   .write.format("delta").mode("append").option("mergeSchema", "true")
+   .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.column_mapping_log"))
 
 print(f"silver.observations_long  rows={len(obs_rows)}")
@@ -124,5 +217,3 @@ SELECT 'dq_unparseable' AS reason, workbook, sheet, row_seq, column,
 FROM {CATALOG}.silver.dq_issues
 WHERE severity = 'unparseable'
 """)
-
-display(spark.table(f"{CATALOG}.silver.quarantine_review"))
