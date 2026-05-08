@@ -171,10 +171,12 @@ st.markdown(
 def _init_state():
     defaults = {
         "view":              "home",
-        "stage":             "empty",     # empty | files_loaded | processing | results
-        "available_files":   [],          # list[Path] available to process
-        "selected_file":     None,        # Path | None
-        "current_run_id":    None,
+        "stage":             "empty",     # empty | staged | running | results
+        "session_id":        None,        # current session_id (str)
+        "session_n_files":   0,           # files generated this session
+        "session_files":     [],          # list[str] file names in this session
+        "run_id":             None,        # int — Databricks job run id
+        "run_started_at":    None,        # float — time.time() when run was triggered
         "log_lines":         [],
     }
     for k, v in defaults.items():
@@ -821,336 +823,295 @@ def _render_home_empty():
     st.title("Process a Quality team workbook")
     st.markdown(
         "<div style='opacity:0.75;font-size:1.05rem;margin-bottom:1.5rem;'>"
-        "Upload your own messy multi-tab Excel, or load the three demo workbooks "
-        "to see the cleaning pipeline in action."
+        "Generate synthetic Quality team workbooks and run them through the "
+        "Databricks medallion pipeline. Each session runs in isolation — its "
+        "files live in a session subfolder, and its results are tagged with a "
+        "session ID so they don't mix with other runs."
         "</div>",
         unsafe_allow_html=True,
     )
 
-    c1, c2 = st.columns(2, gap="large")
-
-    with c1:
-        with st.container(border=True):
-            st.markdown("### Upload an .xlsx")
-            st.markdown(
-                "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
-                "Drag-and-drop or browse. Multi-tab Quality team workbooks expected."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            uploaded = st.file_uploader(
-                "Excel file", type=["xlsx"],
-                key="uploader_main", label_visibility="collapsed",
-            )
-            if uploaded is not None:
-                saved = _save_uploaded(uploaded)
-                st.session_state.available_files = [saved]
-                st.session_state.selected_file = saved
-                st.session_state.stage = "files_loaded"
-                st.toast(f"Loaded {saved.name}")
-                st.rerun()
-
-    with c2:
-        with st.container(border=True):
-            st.markdown("### Generate demo files")
-            st.markdown(
-                "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
-                "Produces three synthetic workbooks (API, KSM, Intermediates) shaped "
-                "like real pharma HPLC quality reports — with embedded dirt."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            if st.button("Generate 3 demo workbooks", type="primary",
-                         use_container_width=True, key="gen_demo"):
-                with st.spinner("Generating synthetic workbooks..."):
-                    files = _generate_demo_files()
-                st.session_state.available_files = files
-                st.session_state.selected_file = files[0] if files else None
-                st.session_state.stage = "files_loaded"
-                st.toast(f"Generated {len(files)} workbooks")
-                st.rerun()
-
-
-def _render_home_files_loaded():
-    st.title("Process a Quality team workbook")
-
-    files = st.session_state.available_files
-    if not files:
-        st.session_state.stage = "empty"
-        st.rerun()
-
-    file_names = [f.name for f in files]
-    cur = st.session_state.selected_file
-    cur_idx = file_names.index(cur.name) if cur and cur.name in file_names else 0
-
-    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-    with c1:
-        sel = st.selectbox(
-            "Workbook to process", file_names, index=cur_idx, key="file_picker",
-            help="Pick one of your loaded workbooks. Each clean run is independent.",
-        )
-        st.session_state.selected_file = next(f for f in files if f.name == sel)
-    with c2:
-        st.markdown("&nbsp;")
-        st.metric("Available", f"{len(files)}", label_visibility="visible")
-    with c3:
-        st.markdown("&nbsp;")
-        cur_file = st.session_state.selected_file
-        if cur_file and cur_file.exists():
-            st.download_button(
-                label="Download",
-                data=cur_file.read_bytes(),
-                file_name=cur_file.name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key="dl_selected",
-                help=f"Download {cur_file.name}",
-            )
-    with c4:
-        st.markdown("&nbsp;")
-        if st.button("Clear / restart", use_container_width=True, key="reset_home"):
-            st.session_state.stage = "empty"
-            st.session_state.available_files = []
-            st.session_state.selected_file = None
-            st.rerun()
-
-    st.markdown("&nbsp;")
-
-    # File metadata strip
-    f = st.session_state.selected_file
-    try:
-        sheets = _list_sheets(f)
-    except Exception as e:
-        st.error(f"Couldn't open {f.name}: {e}")
-        return
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("File", f.name)
-    m2.metric("Size", f"{f.stat().st_size:,} bytes")
-    m3.metric("Sheets", len(sheets))
-    m4.metric("Format", "xlsx")
-
-    st.markdown("&nbsp;")
-
-    # Sheet preview — full xlsx render with merged cells, fills, header band intact
-    st.markdown("### Preview")
-    sel_sheet = st.selectbox("Sheet", sheets, key="preview_sheet")
-    _render_xlsx_full(f, sel_sheet, height=560)
-
-    with st.expander("What you're looking at"):
+    with st.container(border=True):
+        st.markdown("### Generate session files")
         st.markdown(
-            """
-            * **Rows 3–11** form the messy multi-row header band — process label, RT,
-              RRT, Unit, Specification, Internal SRF Specification, all with merged cells.
-            * **Row 13 onwards** is the actual data — batch number, sample/report time,
-              appearance, plus 5–9 impurity columns.
-            * Look for `??:??` malformed times, `NULL`/`?` null sentinels, leading
-              whitespace, lowercase variants, occasional negative impurity values.
-              The cleaner catches them all — see the next step.
-            """
-        )
-
-    st.markdown("&nbsp;")
-
-    # Clean action
-    cta_l, cta_r = st.columns([2, 1])
-    with cta_l:
-        st.markdown(
-            "<div style='font-size:1.1rem;'>"
-            "<strong>Ready to clean?</strong> The pipeline will infer schema, "
-            "AI-map columns, normalize values, and produce both tidy and "
-            "same-format output."
+            "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
+            "How many synthetic workbooks should this session produce? "
+            "Files alternate between API, KSM, and Intermediates types. "
+            "Cap is 25 to stay under the Foundation Model rate limit."
             "</div>",
             unsafe_allow_html=True,
         )
-    with cta_r:
-        if st.button(
-            "Clean and Transform", type="primary",
-            use_container_width=True, key="clean_btn",
-        ):
-            st.session_state.stage = "processing"
+        n_files = st.slider(
+            "Number of files",
+            min_value=1, max_value=25, value=20, step=1,
+            key="gen_count",
+        )
+        if st.button("Generate", type="primary",
+                     use_container_width=True, key="btn_generate"):
+            session_id = _mint_session_id()
+            try:
+                with st.spinner(f"Generating {n_files} workbooks…"):
+                    local_files = _generate_session_files(session_id, n_files)
+                with st.spinner(f"Uploading {n_files} workbooks to volume…"):
+                    _upload_session_files(session_id, local_files)
+            except Exception as e:
+                st.error(f"Generate/upload failed: {e}")
+                return
+            st.session_state.session_id = session_id
+            st.session_state.session_n_files = n_files
+            st.session_state.session_files = [f.name for f in local_files]
+            st.session_state.stage = "staged"
+            st.toast(f"Generated {n_files} workbooks")
             st.rerun()
 
 
-def _render_home_processing():
-    st.title("Cleaning in progress")
+def _render_home_staged():
+    st.title("Session ready")
+    sid = st.session_state.get("session_id")
+    n = st.session_state.get("session_n_files", 0)
+    files = st.session_state.get("session_files", [])
 
-    f: Path = st.session_state.selected_file
-    if not f or not f.exists():
-        st.error("Selected file not found.")
+    if not sid:
         st.session_state.stage = "empty"
         st.rerun()
 
-    run_id = uuid.uuid4().hex[:8]
-    started = time.time()
-
-    with st.status(f"Processing **{f.name}**", expanded=True) as status:
-        # 1. Read
-        st.write("Reading workbook…")
-        try:
-            wb = load_workbook(f, read_only=True, data_only=True)
-            sheet_count = len(wb.sheetnames)
-            wb.close()
-        except Exception as e:
-            status.update(label=f"Failed: {e}", state="error")
-            st.session_state.stage = "files_loaded"
-            return
-        st.write(f"  - {sheet_count} sheet(s) detected")
-        time.sleep(0.3)
-
-        # 2. Pipeline
-        st.write("Inferring schema · AI-mapping columns · Cleaning values…")
-        try:
-            result = process_workbook(f)
-        except Exception as e:
-            status.update(label=f"Pipeline failed: {e}", state="error")
-            st.session_state.stage = "files_loaded"
-            return
-        n_obs = len(result.observations)
-        n_dq = len(result.dq_issues)
-        n_map = len(result.mappings)
-        st.write(f"  - Cleaned **{n_obs:,}** observations across "
-                 f"**{sheet_count}** sheets")
-        st.write(f"  - Logged **{n_dq:,}** DQ fixes with full audit trail")
-        st.write(f"  - Recorded **{n_map:,}** AI-mapping decisions")
-        time.sleep(0.3)
-
-        # 3. Outputs
-        st.write("Building outputs…")
-        with tempfile_dir() as tmp:
-            tidy_path = Path(tmp) / f"{f.stem}_tidy.xlsx"
-            write_tidy_workbook(result, tidy_path)
-            st.write(f"  - Tidy long-form xlsx ({tidy_path.stat().st_size:,} bytes)")
-
-            obs_df = _serialize_observations(result.observations)
-            map_df = _serialize_mappings(result.mappings)
-            obs_headers = list(obs_df.columns)
-            obs_rows = obs_df.values.tolist()
-            map_headers = list(map_df.columns)
-            map_rows = map_df.values.tolist()
-
-            same_path = Path(tmp) / f"{f.stem}_same_format.xlsx"
-            build_same_format_xlsx(
-                input_path=f,
-                obs_headers=obs_headers,
-                obs_rows=obs_rows,
-                map_headers=map_headers,
-                map_rows=map_rows,
-                output_path=same_path,
-            )
-            st.write(f"  - Same-format xlsx ({same_path.stat().st_size:,} bytes)")
-
-            # 4. Persist
-            st.write("Persisting run…")
-            duration = time.time() - started
-            run_dir = _save_run(run_id, f, result, tidy_path, same_path, duration)
-
-        st.write(f"  - Saved to `{run_dir}`")
-        status.update(
-            label=f"Cleaned · {n_obs:,} obs · {n_dq:,} fixes · "
-                  f"{round(time.time()-started, 1)}s",
-            state="complete", expanded=False,
-        )
-
-    st.session_state.current_run_id = run_id
-    st.session_state.stage = "results"
-    time.sleep(0.4)
-    st.rerun()
-
-
-# Helper context manager (small, kept inline)
-from contextlib import contextmanager
-import tempfile
-
-
-@contextmanager
-def tempfile_dir():
-    d = tempfile.mkdtemp(prefix="qde_run_")
-    try:
-        yield d
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
-
-
-def _render_run_results(run_id: str):
-    run = _load_run(run_id)
-    if run is None:
-        st.error(f"Run `{run_id}` not found.")
-        if st.button("← Back to Home"):
-            st.session_state.stage = "empty"
-            st.session_state.current_run_id = None
-            st.rerun()
-        return
-
-    s = run["summary"]
-    obs = run["observations"]
-    dq = run["dq_issues"]
-    mp = run["mappings"]
-
-    # Header strip
-    started = s.get("started_at", "")
-    try:
-        when = datetime.fromisoformat(started.replace("Z", "+00:00")).strftime(
-            "%Y-%m-%d %H:%M UTC"
-        )
-    except Exception:
-        when = started
     st.markdown(
-        f"""
-        <div class="runheader">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
-              <div style="font-size:0.8rem;opacity:0.65;">RUN RESULTS</div>
-              <div style="font-size:1.4rem;font-weight:700;margin-top:0.1rem;">
-                  {s['file_name']}
-              </div>
-              <div style="opacity:0.7;font-size:0.9rem;margin-top:0.2rem;">
-                  Run <code>{s['run_id']}</code> &nbsp;·&nbsp; {when}
-                  &nbsp;·&nbsp; {s['duration_s']}s
-              </div>
-            </div>
-            <div>
-              <span class='badge badge-info'>Sheets {s.get('sheets_count', '?')}</span>
-              &nbsp;
-              <span class='badge badge-ok'>Pass {s.get('pass_rate_pct', '?')}%</span>
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+        f"Session **`{sid}`** has **{n} file(s)** uploaded to "
+        f"`{INPUT_VOLUME_BASE}/{sid}/`. Click **Run pipeline** to trigger "
+        "the medallion job, or **Discard session** to clean up and start over."
     )
 
-    # KPI tiles
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Observations", f"{s['n_observations']:,}")
-    k2.metric("DQ fixes", f"{s['n_dq_issues']:,}")
-    k3.metric("AI mappings", f"{s['n_mappings']:,}")
-    k4.metric("Spec violations", f"{s['n_violations']:,}")
-    k5.metric("Pass rate", f"{s['pass_rate_pct']}%")
-    k6.metric("Low-confidence maps", f"{s.get('low_confidence_mappings', 0)}")
+    with st.expander(f"Files in this session ({n})", expanded=False):
+        for fn in files:
+            st.markdown(f"- `{fn}`")
 
-    # Action row
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        if st.button("Run pipeline", type="primary",
+                     use_container_width=True, key="btn_run"):
+            try:
+                with st.spinner("Triggering pipeline…"):
+                    run_id = _trigger_pipeline(sid)
+            except Exception as e:
+                st.error(f"Pipeline trigger failed: {e}")
+                return
+            st.session_state.run_id = run_id
+            st.session_state.run_started_at = time.time()
+            st.session_state.stage = "running"
+            st.rerun()
+    with c2:
+        if st.button("Discard session", use_container_width=True, key="btn_discard"):
+            with st.spinner("Discarding session…"):
+                try:
+                    _discard_session(sid)
+                except Exception as e:
+                    st.warning(f"Cleanup partial: {e}")
+            for k in ("session_id", "session_n_files", "session_files",
+                      "run_id", "run_started_at"):
+                st.session_state.pop(k, None)
+            st.session_state.stage = "empty"
+            st.rerun()
+
+
+def _render_home_running():
+    st.title("Pipeline running")
+    sid = st.session_state.get("session_id")
+    run_id = st.session_state.get("run_id")
+    started_at = st.session_state.get("run_started_at") or time.time()
+
+    if not (sid and run_id):
+        st.error("No active run.")
+        st.session_state.stage = "empty"
+        st.rerun()
+
+    header = st.empty()
+    body = st.empty()
+    failure = st.empty()
+
+    POLL_INTERVAL_S = 3
+    TASK_ORDER = ["setup", "bronze_ingest", "silver_ai_cleaning",
+                  "gold_curated", "export_sharepoint"]
+
+    while True:
+        elapsed = int(time.time() - started_at)
+        try:
+            poll = _poll_run(run_id)
+        except Exception as e:
+            header.error(f"Polling failed: {e}")
+            time.sleep(POLL_INTERVAL_S)
+            continue
+
+        header.markdown(
+            f"Session **`{sid}`** &nbsp;·&nbsp; pipeline run `{run_id}` "
+            f"&nbsp;·&nbsp; **{elapsed // 60}m {elapsed % 60}s** elapsed"
+        )
+
+        tasks_by_key = {t["task_key"]: t for t in poll["tasks"]}
+        rows = []
+        for tk in TASK_ORDER:
+            t = tasks_by_key.get(tk, {"life_cycle_state": "PENDING",
+                                       "result_state": None,
+                                       "start_time": None,
+                                       "end_time": None})
+            lcs = t.get("life_cycle_state", "PENDING")
+            rs = t.get("result_state")
+            if lcs == "TERMINATED" and rs == "SUCCESS":
+                marker, status_text = "✓", "SUCCESS"
+            elif lcs == "TERMINATED" and rs in ("FAILED", "TIMEDOUT", "CANCELED"):
+                marker, status_text = "✗", rs
+            elif lcs == "RUNNING":
+                marker, status_text = "●", "RUNNING"
+            elif lcs == "PENDING":
+                marker, status_text = "○", "PENDING"
+            elif lcs == "SKIPPED":
+                marker, status_text = "—", "SKIPPED"
+            else:
+                marker, status_text = "○", lcs
+
+            if t.get("start_time"):
+                start_ms = t["start_time"]
+                end_ms = t.get("end_time") or int(time.time() * 1000)
+                t_secs = max(0, (end_ms - start_ms) // 1000)
+                t_elapsed = (f"{t_secs // 60}m {t_secs % 60}s"
+                             if t_secs >= 60 else f"{t_secs}s")
+            else:
+                t_elapsed = "—"
+            rows.append(
+                f"`{marker}` &nbsp; **{tk}** &nbsp;·&nbsp; "
+                f"{status_text} &nbsp;·&nbsp; {t_elapsed}"
+            )
+
+        body.markdown("\n\n".join(rows))
+
+        lcs_overall = poll["life_cycle_state"]
+        if lcs_overall == "TERMINATED":
+            rs_overall = poll["result_state"]
+            if rs_overall == "SUCCESS":
+                st.session_state.stage = "results"
+                time.sleep(0.4)
+                st.rerun()
+            else:
+                failed_tasks = [
+                    t["task_key"] for t in poll["tasks"]
+                    if t.get("result_state") in ("FAILED", "TIMEDOUT", "CANCELED")
+                ]
+                msg = poll.get("state_message") or "Pipeline did not complete successfully."
+                failure.error(
+                    f"Pipeline {rs_overall}. "
+                    f"Failed task(s): {', '.join(failed_tasks) or 'unknown'}.\n\n{msg}"
+                )
+                cR, cD = st.columns(2)
+                with cR:
+                    if st.button("Retry this session", type="primary",
+                                 use_container_width=True, key="btn_retry"):
+                        try:
+                            with st.spinner("Cleaning prior rows + re-triggering…"):
+                                _clear_session_table_rows(sid)
+                                run_id2 = _trigger_pipeline(sid)
+                            st.session_state.run_id = run_id2
+                            st.session_state.run_started_at = time.time()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Retry failed: {e}")
+                with cD:
+                    if st.button("Discard and start over",
+                                 use_container_width=True, key="btn_fail_discard"):
+                        try:
+                            with st.spinner("Discarding session…"):
+                                _discard_session(sid)
+                        except Exception as e:
+                            st.warning(f"Cleanup partial: {e}")
+                        for k in ("session_id", "session_n_files",
+                                  "session_files", "run_id", "run_started_at"):
+                            st.session_state.pop(k, None)
+                        st.session_state.stage = "empty"
+                        st.rerun()
+                return
+        elif lcs_overall == "INTERNAL_ERROR":
+            failure.error(
+                f"Pipeline INTERNAL_ERROR: {poll.get('state_message','')}"
+            )
+            if st.button("Back to staged", key="btn_back_to_staged"):
+                st.session_state.stage = "staged"
+                st.rerun()
+            return
+        time.sleep(POLL_INTERVAL_S)
+
+
+def _load_session_observations(session_id: str) -> pd.DataFrame:
+    return run_query(
+        f"SELECT * FROM {CATALOG}.gold.fact_observation "
+        f"WHERE session_id = '{session_id}'"
+    )
+
+
+def _load_session_dq_issues(session_id: str) -> pd.DataFrame:
+    return run_query(
+        f"SELECT * FROM {CATALOG}.silver.dq_issues "
+        f"WHERE session_id = '{session_id}'"
+    )
+
+
+def _load_session_mappings(session_id: str) -> pd.DataFrame:
+    return run_query(
+        f"SELECT * FROM {CATALOG}.silver.column_mapping_log "
+        f"WHERE session_id = '{session_id}'"
+    )
+
+
+def _render_home_results():
+    sid = st.session_state.get("session_id")
+    if not sid:
+        st.error("No session in state.")
+        st.session_state.stage = "empty"
+        st.rerun()
+
+    obs = _load_session_observations(sid)
+    dq = _load_session_dq_issues(sid)
+    mp = _load_session_mappings(sid)
+
     a1, a2 = st.columns([4, 1])
     with a1:
+        st.title("Results")
         st.caption(
-            "Everything below is **scoped to this run only**. "
-            "Past runs live in History; aggregates in Dashboard."
+            f"Session **`{sid}`** &nbsp;·&nbsp; "
+            f"{len(obs):,} observations &nbsp;·&nbsp; "
+            f"{len(dq):,} DQ fixes &nbsp;·&nbsp; "
+            f"{len(mp):,} mapping decisions"
         )
     with a2:
         if st.button("Run another", use_container_width=True, key="run_another"):
+            for k in ("session_id", "session_n_files", "session_files",
+                      "run_id", "run_started_at"):
+                st.session_state.pop(k, None)
             st.session_state.stage = "empty"
-            st.session_state.available_files = []
-            st.session_state.selected_file = None
-            st.session_state.current_run_id = None
             st.rerun()
 
-    # Tabs — order: Deliverables, DQ Audit, Column Resolution, Compliance Metrics
+    # KPI tiles
+    if not obs.empty:
+        n_obs = len(obs)
+        n_pass = int((obs["pass"] == True).sum()) if "pass" in obs.columns else 0
+        n_fail = int((obs["pass"] == False).sum()) if "pass" in obs.columns else 0
+        decided = max(n_pass + n_fail, 1)
+        pass_pct = round(100.0 * n_pass / decided, 1)
+        n_workbooks = obs["workbook"].nunique() if "workbook" in obs.columns else 0
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Workbooks", f"{n_workbooks:,}")
+        k2.metric("Observations", f"{n_obs:,}")
+        k3.metric("DQ fixes", f"{len(dq):,}")
+        k4.metric("Spec violations", f"{n_fail:,}")
+        k5.metric("Pass rate", f"{pass_pct}%")
+
+    # Tabs (same shape as before, session-scoped data)
+    out_clean = f"{OUTPUT_VOLUME_BASE}/{sid}/cleaned"
+    out_tidy = f"{OUTPUT_VOLUME_BASE}/{sid}/transformed"
+
     tab_outputs, tab_clean, tab_ai, tab_analytics = st.tabs([
         "Deliverables", "DQ Audit", "Column Resolution", "Compliance Metrics",
     ])
-
     with tab_outputs:
-        _tab_outputs(run["dir"])
+        _tab_outputs_session(out_clean, out_tidy)
     with tab_clean:
         _tab_cleaning(dq)
     with tab_ai:
@@ -1299,75 +1260,93 @@ def _tab_analytics(obs: pd.DataFrame):
             st.line_chart(pivot, height=380)
 
 
-def _tab_outputs(run_dir: Path):
+def _list_volume_xlsx(vol_dir: str) -> list[dict]:
+    """List xlsx files in a UC volume subdirectory via WorkspaceClient."""
+    w = _ws_client()
+    if w is None:
+        return []
+    out: list[dict] = []
+    try:
+        for f in w.files.list_directory_contents(vol_dir):
+            if f.path.endswith(".xlsx"):
+                out.append({
+                    "name": Path(f.path).name,
+                    "path": f.path,
+                    "size": getattr(f, "file_size", 0) or 0,
+                })
+    except Exception as e:
+        # Empty / not-yet-created folder is normal — return empty list
+        print(f"  (volume listing skipped for {vol_dir}: {e})")
+    return out
+
+
+def _download_volume_bytes(remote_path: str) -> bytes:
+    w = _ws_client()
+    if w is None:
+        return b""
+    resp = w.files.download(remote_path)
+    return resp.contents.read()
+
+
+def _tab_outputs_session(cleaned_dir: str, tidy_dir: str):
     st.markdown(
-        "**Both cleaned views are saved with this run.** "
+        "**Both cleaned views are saved to this session's output folder.** "
         "Same-format mirrors the input shape; tidy is the long-form analytics view."
     )
-
-    same_path = run_dir / "same_format.xlsx"
-    tidy_path = run_dir / "tidy.xlsx"
-
     sub_same, sub_tidy = st.tabs([
         "Same-format (mirrors input)",
         "Tidy long-form (analytics)",
     ])
 
-    # ---- Same-format ----
     with sub_same:
-        st.caption(
-            "Input shape preserved — 7 batch tabs, merged headers, full header "
-            "band — only data cells rewritten with cleaned values."
-        )
-        if not same_path.exists():
-            st.warning("Same-format output not found.")
+        st.caption(f"Folder: `{cleaned_dir}`")
+        files = _list_volume_xlsx(cleaned_dir)
+        if not files:
+            st.info("No same-format outputs found.")
         else:
-            top_l, top_r = st.columns([4, 1])
-            with top_l:
-                st.markdown(f"**{same_path.name}** &nbsp; "
-                            f"<span style='opacity:0.6'>"
-                            f"{same_path.stat().st_size:,} bytes</span>",
-                            unsafe_allow_html=True)
-            with top_r:
-                st.download_button(
-                    "Download", data=same_path.read_bytes(),
-                    file_name=same_path.name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True, key="dl_same", type="primary",
-                )
+            choice = st.selectbox("File", [f["name"] for f in files],
+                                  key="same_pick")
+            sel = next(f for f in files if f["name"] == choice)
+            data = _download_volume_bytes(sel["path"])
+            st.download_button(
+                "Download", data=data, file_name=sel["name"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True, key="dl_same",
+                type="primary",
+            )
+            tmp = Path("/tmp/qde_preview") / sel["name"]
+            tmp.parent.mkdir(exist_ok=True)
+            tmp.write_bytes(data)
             try:
-                sheets = _list_sheets(same_path)
+                sheets = _list_sheets(tmp)
                 sheet = st.selectbox("Sheet", sheets, key="same_sheet_pick")
-                _render_xlsx_full(same_path, sheet, height=620)
+                _render_xlsx_full(tmp, sheet, height=620)
             except Exception as e:
                 st.warning(f"Preview unavailable: {e}")
 
-    # ---- Tidy long-form ----
     with sub_tidy:
-        st.caption(
-            "Three sheets: `observations`, `dq_issues`, `column_mapping_log` — "
-            "ready for analyst queries and dashboards."
-        )
-        if not tidy_path.exists():
-            st.warning("Tidy output not found.")
+        st.caption(f"Folder: `{tidy_dir}`")
+        files = _list_volume_xlsx(tidy_dir)
+        if not files:
+            st.info("No tidy outputs found.")
         else:
-            top_l, top_r = st.columns([4, 1])
-            with top_l:
-                st.markdown(f"**{tidy_path.name}** &nbsp; "
-                            f"<span style='opacity:0.6'>"
-                            f"{tidy_path.stat().st_size:,} bytes</span>",
-                            unsafe_allow_html=True)
-            with top_r:
-                st.download_button(
-                    "Download", data=tidy_path.read_bytes(),
-                    file_name=tidy_path.name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True, key="dl_tidy", type="primary",
-                )
+            choice = st.selectbox("File", [f["name"] for f in files],
+                                  key="tidy_pick")
+            sel = next(f for f in files if f["name"] == choice)
+            data = _download_volume_bytes(sel["path"])
+            st.download_button(
+                "Download", data=data, file_name=sel["name"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True, key="dl_tidy",
+                type="primary",
+            )
+            tmp = Path("/tmp/qde_preview") / sel["name"]
+            tmp.parent.mkdir(exist_ok=True)
+            tmp.write_bytes(data)
             try:
-                sheets = _list_sheets(tidy_path)
+                sheets = _list_sheets(tmp)
                 sheet = st.selectbox("Sheet", sheets, key="tidy_sheet_pick")
-                _render_xlsx_full(tidy_path, sheet, height=620)
+                _render_xlsx_full(tmp, sheet, height=620)
             except Exception as e:
                 st.warning(f"Preview unavailable: {e}")
 
@@ -1376,17 +1355,15 @@ def render_home():
     stage = st.session_state.stage
     if stage == "empty":
         _render_home_empty()
-    elif stage == "files_loaded":
-        _render_home_files_loaded()
-    elif stage == "processing":
-        _render_home_processing()
+    elif stage == "staged":
+        _render_home_staged()
+    elif stage == "running":
+        _render_home_running()
     elif stage == "results":
-        run_id = st.session_state.current_run_id
-        if run_id:
-            _render_run_results(run_id)
-        else:
-            st.session_state.stage = "empty"
-            st.rerun()
+        _render_home_results()
+    else:
+        st.session_state.stage = "empty"
+        st.rerun()
 
 
 # ===========================================================================
