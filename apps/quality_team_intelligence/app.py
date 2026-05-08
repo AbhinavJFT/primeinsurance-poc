@@ -137,20 +137,73 @@ st.markdown(
         .footer-note { opacity: 0.6; font-size: 0.85rem; padding-top: 1rem; }
 
         section[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+            background: linear-gradient(180deg, #F8FAFC 0%, #EFF4FA 100%);
             border-right: 1px solid #E2E8F0;
         }
+        /* Default (inactive) sidebar nav button */
         section[data-testid="stSidebar"] .stButton button {
             text-align: left;
             font-weight: 500;
             background: transparent;
             border: 1px solid transparent;
             box-shadow: none;
-            color: #1E293B;
+            color: #334155;
+            padding-left: 1rem;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
         }
         section[data-testid="stSidebar"] .stButton button:hover {
+            background: rgba(37, 99, 235, 0.06);
+            border-color: rgba(37, 99, 235, 0.18);
+            color: #1E40AF;
+        }
+        /* Active sidebar nav button (rendered with type="primary") —
+           override Streamlit's default red so the active item reads as
+           "selected" with a blue accent instead. */
+        section[data-testid="stSidebar"] .stButton button[kind="primary"] {
+            background: linear-gradient(90deg, rgba(37,99,235,0.18) 0%, rgba(37,99,235,0.08) 100%);
+            border: 1px solid rgba(37, 99, 235, 0.35);
+            border-left: 3px solid #2563EB;
+            color: #1E3A8A;
+            font-weight: 700;
+            box-shadow: 0 1px 2px rgba(37, 99, 235, 0.08);
+        }
+        section[data-testid="stSidebar"] .stButton button[kind="primary"]:hover {
+            background: linear-gradient(90deg, rgba(37,99,235,0.25) 0%, rgba(37,99,235,0.12) 100%);
+        }
+        /* Sidebar branded header */
+        .srf-brand {
+            padding: 0.4rem 0 0.2rem 0;
+        }
+        .srf-brand .name {
+            font-size: 1.9rem;
+            font-weight: 800;
+            letter-spacing: 3px;
+            color: #0F172A;
+            line-height: 1;
+        }
+        .srf-brand .tag {
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.7px;
+            color: #64748B;
+            text-transform: uppercase;
+            margin-top: 0.35rem;
+        }
+        .srf-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, #CBD5E1 50%, transparent 100%);
+            margin: 1rem 0;
+        }
+        .srf-catalog-pill {
+            display: inline-block;
+            padding: 4px 10px;
             background: rgba(37, 99, 235, 0.08);
-            border-color: rgba(37, 99, 235, 0.2);
+            border: 1px solid rgba(37, 99, 235, 0.18);
+            border-radius: 6px;
+            font-family: ui-monospace, Menlo, monospace;
+            font-size: 0.78rem;
+            color: #1E40AF;
+            letter-spacing: 0.3px;
         }
     </style>
     """,
@@ -595,34 +648,28 @@ def _render_xlsx_full(path: Path, sheet_name: str, height: int = 560):
 # ===========================================================================
 
 def _sidebar():
+    current_view = st.session_state.get("view", "home")
     with st.sidebar:
         st.markdown(
-            "<div style='font-size:1.5rem;font-weight:800;letter-spacing:1px;'>SRF</div>"
-            "<div style='font-size:0.95rem;font-weight:600;opacity:0.7;'>Quality Data Pipeline</div>",
+            "<div class='srf-brand'>"
+            "<div class='name'>SRF</div>"
+            "<div class='tag'>Quality Data Pipeline</div>"
+            "</div>"
+            "<div class='srf-divider'></div>",
             unsafe_allow_html=True,
         )
-        st.markdown("---")
 
-        nav_items = [
-            ("Home", "home"),
-            ("History", "history"),
-            ("Dashboard", "dashboard"),
-        ]
-        for label, key in nav_items:
-            if st.button(label, key=f"nav_{key}", use_container_width=True):
+        for label, key in [("Home", "home"), ("History", "history"), ("Dashboard", "dashboard")]:
+            btn_type = "primary" if key == current_view else "secondary"
+            if st.button(label, key=f"nav_{key}",
+                         use_container_width=True, type=btn_type):
                 st.session_state.view = key
-                if key == "home":
-                    # Reset stage when going home, unless we're showing a result
-                    if st.session_state.stage == "results":
-                        pass  # keep results visible
                 st.rerun()
 
-        st.markdown("---")
-        st.caption(f"Catalog: `{CATALOG}`")
-
         st.markdown(
-            "<div class='footer-note' style='padding-top:1rem;'>"
-            "SRF POC<br>SharePoint round-trip<br>Medallion pipeline"
+            "<div class='srf-divider'></div>"
+            f"<div style='padding-top:0.25rem;'>"
+            f"<span class='srf-catalog-pill'>catalog · {CATALOG}</span>"
             "</div>",
             unsafe_allow_html=True,
         )
