@@ -783,40 +783,30 @@ _STATUS_STYLES = {
 def _task_card_html(task_key: str, status_key: str, elapsed_str: str) -> str:
     label, subtitle = TASK_LABELS.get(task_key, (task_key, ""))
     style = _STATUS_STYLES.get(status_key, _STATUS_STYLES["PENDING"])
-    pulse_css = ("animation: pulse 1.4s ease-in-out infinite;"
-                 if status_key == "RUNNING" else "")
-    return f"""
-    <div style="
-      background: {style['bg']};
-      border: 1px solid {style['border']};
-      border-left: 6px solid {style['border']};
-      border-radius: 10px;
-      padding: 14px 18px;
-      margin-bottom: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      {pulse_css}
-    ">
-      <div style="flex:1; min-width:0;">
-        <div style="font-weight:600;font-size:1.05rem;color:#0F172A;">{label}</div>
-        <div style="opacity:0.7;font-size:0.85rem;margin-top:2px;color:#475569;">{subtitle}</div>
-      </div>
-      <div style="text-align:right;min-width:120px;">
-        <div style="
-          display:inline-block;
-          background:{style['border']};
-          color:white;
-          font-weight:700;
-          font-size:0.75rem;
-          letter-spacing:0.5px;
-          padding:3px 10px;
-          border-radius:999px;
-        ">{style['label']}</div>
-        <div style="opacity:0.7;font-size:0.85rem;margin-top:4px;color:#475569;">{elapsed_str}</div>
-      </div>
-    </div>
-    """
+    pulse = "animation: pulse 1.4s ease-in-out infinite;" if status_key == "RUNNING" else ""
+    card_style = (
+        f"background:{style['bg']};border:1px solid {style['border']};"
+        f"border-left:6px solid {style['border']};border-radius:10px;"
+        f"padding:14px 18px;margin-bottom:10px;display:flex;"
+        f"align-items:center;justify-content:space-between;{pulse}"
+    )
+    pill_style = (
+        f"display:inline-block;background:{style['border']};color:white;"
+        f"font-weight:700;font-size:0.75rem;letter-spacing:0.5px;"
+        f"padding:3px 10px;border-radius:999px;"
+    )
+    return (
+        f'<div style="{card_style}">'
+        f'<div style="flex:1;min-width:0;">'
+        f'<div style="font-weight:600;font-size:1.05rem;color:#0F172A;">{label}</div>'
+        f'<div style="opacity:0.7;font-size:0.85rem;margin-top:2px;color:#475569;">{subtitle}</div>'
+        f'</div>'
+        f'<div style="text-align:right;min-width:120px;">'
+        f'<div style="{pill_style}">{style["label"]}</div>'
+        f'<div style="opacity:0.7;font-size:0.85rem;margin-top:4px;color:#475569;">{elapsed_str}</div>'
+        f'</div>'
+        f'</div>'
+    )
 
 
 def _render_home_running():
@@ -864,32 +854,31 @@ def _render_home_running():
             time.sleep(POLL_INTERVAL_S)
             continue
 
-        # Header card with metadata
+        # Header card with metadata (single-line tags so Streamlit's markdown
+        # parser doesn't choke on multi-line style attributes).
+        header_card_style = (
+            "background:linear-gradient(135deg,#F8FAFC 0%,#EFF6FF 100%);"
+            "border:1px solid #DBEAFE;border-radius:12px;"
+            "padding:16px 20px;margin-bottom:16px;"
+        )
+        meta_label_style = (
+            "font-size:0.78rem;letter-spacing:1px;color:#64748B;"
+            "text-transform:uppercase;font-weight:600;"
+        )
+        meta_value_style = (
+            "font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;"
+            "color:#0F172A;font-weight:600;"
+        )
         header.markdown(
-            f"""
-            <div style="
-              background: linear-gradient(135deg,#F8FAFC 0%,#EFF6FF 100%);
-              border: 1px solid #DBEAFE;
-              border-radius: 12px;
-              padding: 16px 20px;
-              margin-bottom: 16px;
-            ">
-              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-                <div>
-                  <div style="font-size:0.78rem;letter-spacing:1px;color:#64748B;text-transform:uppercase;font-weight:600;">Session</div>
-                  <div style="font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;color:#0F172A;font-weight:600;">{sid}</div>
-                </div>
-                <div>
-                  <div style="font-size:0.78rem;letter-spacing:1px;color:#64748B;text-transform:uppercase;font-weight:600;">Run</div>
-                  <div style="font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;color:#0F172A;font-weight:600;">{run_id}</div>
-                </div>
-                <div>
-                  <div style="font-size:0.78rem;letter-spacing:1px;color:#64748B;text-transform:uppercase;font-weight:600;">Elapsed</div>
-                  <div style="font-size:1.1rem;color:#0F172A;font-weight:700;">{elapsed // 60}m {elapsed % 60}s</div>
-                </div>
-              </div>
-            </div>
-            """,
+            f'<div style="{header_card_style}">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">'
+            f'<div><div style="{meta_label_style}">Session</div>'
+            f'<div style="{meta_value_style}">{sid}</div></div>'
+            f'<div><div style="{meta_label_style}">Run</div>'
+            f'<div style="{meta_value_style}">{run_id}</div></div>'
+            f'<div><div style="{meta_label_style}">Elapsed</div>'
+            f'<div style="font-size:1.1rem;color:#0F172A;font-weight:700;">{elapsed // 60}m {elapsed % 60}s</div></div>'
+            f'</div></div>',
             unsafe_allow_html=True,
         )
 
