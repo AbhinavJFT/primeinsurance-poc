@@ -42,16 +42,29 @@ resources:
       id: "2de6a251cf2870eb"
       permission: "CAN_USE"
 
-  - name: bronze_volume
-    description: "Read access to the SharePoint /input mock volume."
+  - name: bronze_input_volume
+    description: |
+      Read+write access to the SharePoint /input mock volume. The app
+      uploads session files into /sessions/<session_id>/ subfolders
+      before triggering the medallion pipeline.
     uc_securable:
       securable_full_name: "quality_de.bronze.sharepoint_input"
       securable_type: "VOLUME"
-      permission: "READ_VOLUME"
+      permission: "WRITE_VOLUME"
 
-  - name: output_volume
-    description: "Read access to the SharePoint /output mock volume."
+  - name: bronze_output_volume
+    description: "Read access to the SharePoint /output mock volume for rendering session results."
     uc_securable:
       securable_full_name: "quality_de.bronze.sharepoint_output"
       securable_type: "VOLUME"
       permission: "READ_VOLUME"
+
+  - name: pipeline_job
+    description: |
+      Permission to trigger the medallion pipeline job
+      (quality_de_pipeline) via WorkspaceClient.jobs.run_now from the app.
+      The app's identity needs CAN_MANAGE_RUN to start runs and observe
+      their per-task state during polling.
+    job:
+      id: "${resources.jobs.quality_de_pipeline.id}"
+      permission: "CAN_MANAGE_RUN"
