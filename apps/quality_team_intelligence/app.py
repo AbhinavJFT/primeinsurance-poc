@@ -1498,68 +1498,6 @@ def render_dashboard():
         unsafe_allow_html=True,
     )
 
-    # ── Hero KPI: Time saved estimate ──────────────────────────────────────
-    # Each manual touch (correction, mapping decision, spec violation review)
-    # takes ~15 seconds for an analyst to inspect, fix, and log. The pipeline
-    # automates all of these — the headline business value of the POC.
-    SECONDS_PER_TOUCH = 15
-    try:
-        totals = run_query(f"""
-            SELECT
-              (SELECT COUNT(*) FROM {CATALOG}.silver.dq_issues)         AS corrections,
-              (SELECT COUNT(*) FROM {CATALOG}.silver.column_mapping_log) AS mappings,
-              (SELECT COUNT(*) FROM {CATALOG}.gold.fact_observation
-                 WHERE pass = false)                                    AS violations
-        """)
-        if not totals.empty:
-            row = totals.iloc[0]
-            touches = int(row.corrections) + int(row.mappings) + int(row.violations)
-            seconds_saved = touches * SECONDS_PER_TOUCH
-            hours = seconds_saved // 3600
-            minutes = (seconds_saved % 3600) // 60
-
-            st.markdown(
-                f"""
-                <div style="
-                  background: linear-gradient(135deg,#ECFDF5 0%,#D1FAE5 100%);
-                  border: 1px solid #10B981;
-                  border-radius: 14px;
-                  padding: 1.25rem 1.5rem;
-                  margin-bottom: 1.5rem;
-                  display: flex;
-                  align-items: center;
-                  justify-content: space-between;
-                  flex-wrap: wrap;
-                  gap: 1rem;
-                ">
-                  <div>
-                    <div style="font-size:0.78rem;letter-spacing:1.5px;color:#047857;font-weight:700;text-transform:uppercase;">
-                      Manual review time saved
-                    </div>
-                    <div style="font-size:2.2rem;font-weight:800;color:#064E3B;line-height:1.1;margin-top:0.3rem;">
-                      ~{hours}h {minutes}m
-                    </div>
-                    <div style="opacity:0.75;font-size:0.85rem;margin-top:0.4rem;color:#065F46;">
-                      Across {touches:,} corrections, column standardizations,
-                      and spec-violation reviews — all automated by the pipeline.
-                    </div>
-                  </div>
-                  <div style="text-align:right;">
-                    <div style="font-size:0.7rem;letter-spacing:1px;color:#047857;font-weight:600;">EQUIVALENT TO</div>
-                    <div style="font-size:1.05rem;color:#064E3B;font-weight:700;margin-top:0.3rem;">
-                      {hours/8:.1f} working days
-                    </div>
-                    <div style="font-size:0.78rem;color:#065F46;margin-top:0.2rem;opacity:0.8;">
-                      at ~15 sec per manual touch
-                    </div>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-    except Exception:
-        pass
-
     # ── Section A: App sessions (queried from gold) ─────────────────────────
     sessions = _list_sessions()
     st.markdown("## Recent batches")
