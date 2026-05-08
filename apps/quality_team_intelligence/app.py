@@ -2,32 +2,29 @@
 
 Three top-level views via the sidebar:
 
-  Home      — upload an .xlsx (or generate the 3 demo files), preview,
-              click Clean. Live-streaming progress, then a per-run
-              results page with Deliverables / DQ Audit / Column Resolution /
-              Compliance Metrics tabs (all scoped to the file just processed).
+  Home      — generate N synthetic Quality team workbooks, upload them
+              to a session-scoped subfolder in the input volume, trigger
+              the medallion pipeline job, stream live status, then render
+              the cleaned outputs filtered to that session.
 
-  History   — every previous interactive run, newest first. Click any
-              row to re-open that run's results.
+  History   — every previous app session, newest first. Click any row to
+              re-open that session's results.
 
-  Dashboard — comprehensive analytics across both the interactive
-              runs AND the batch pipeline's bronze/silver/gold tables.
+  Dashboard — comprehensive analytics across all app sessions AND the
+              batch pipeline's bronze/silver/gold tables.
 
-Each interactive run is persisted to /Volumes/<catalog>/bronze/<output>/
-_app_runs/<run_id>/ as a small directory of summary.json + parquet files
-+ the input/output xlsx files. No SQL writes, so the app needs only
-READ_VOLUME + WRITE_VOLUME on the output volume.
+The app does not clean files locally. All cleaning happens inside the
+Databricks medallion pipeline (`quality_de_pipeline`), and outputs land
+in /Volumes/<catalog>/bronze/sharepoint_output/sessions/<sid>/{cleaned,
+transformed}/. Required permissions: WRITE_VOLUME on the input volume,
+READ_VOLUME on the output volume, CAN_MANAGE_RUN on the pipeline job.
 """
 
 from __future__ import annotations
 
-import io
-import json
 import os
-import shutil
 import sys
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -45,9 +42,13 @@ sys.path.insert(0, str(APP_DIR))
 if (APP_DIR.parent.parent / "quality_core").exists():
     sys.path.insert(0, str(APP_DIR.parent.parent))
 
-from quality_core import process_workbook, write_tidy_workbook  # noqa: E402
-from quality_core.inplace_cleaner import build_same_format_xlsx  # noqa: E402
-from generate_quality_data import generate as generate_synthetic  # noqa: E402
+# quality_core's process_workbook / write_tidy_workbook /
+# build_same_format_xlsx are no longer called from the app — cleaning runs
+# inside the Databricks medallion pipeline now. The library stays vendored
+# (it's still imported from notebooks/02_silver_ai_cleaning.py) so vendor.sh
+# keeps the app folder shippable as a Databricks App. We do still need the
+# generator to produce session files locally before upload.
+from generate_quality_data import build_workbook, workbook_specs  # noqa: E402
 
 # Try optional Databricks imports — only needed for SQL/job features
 try:
@@ -67,13 +68,6 @@ CATALOG = os.environ.get("QDE_CATALOG", "quality_de")
 VOLUME_OUTPUT = os.environ.get("QDE_VOLUME_OUTPUT", "sharepoint_output")
 WAREHOUSE_ID = os.environ.get("DATABRICKS_WAREHOUSE_ID", "2de6a251cf2870eb")
 JOB_NAME_HINT = os.environ.get("QDE_JOB_NAME_HINT", "quality_de")
-
-# State storage. Databricks Apps don't FUSE-mount UC Volumes — volume access
-# requires the Files API, which would mean refactoring all our pandas reads
-# and writes. /tmp lives inside the app container, survives within a single
-# app session, and is wiped on container restart. That's fine for a demo.
-RUNS_DIR = Path(os.environ.get("QDE_RUNS_DIR", "/tmp/qde_runs"))
-WORKING_DIR = Path(os.environ.get("QDE_WORKING_DIR", "/tmp/qde_working"))
 
 # Visual constants
 PRIMARY = "#2563EB"
@@ -242,46 +236,8 @@ def run_query(query: str) -> pd.DataFrame:
 
 
 # ===========================================================================
-# Helpers — file management
+# Helpers — workbook readers (preview side, still used by Deliverables tab)
 # ===========================================================================
-
-def _ensure_dirs():
-    """Create _app_runs/ and _app_working/ inside the output volume if they
-    don't exist. Idempotent."""
-    try:
-        RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        WORKING_DIR.mkdir(parents=True, exist_ok=True)
-    except (PermissionError, OSError):
-        # Volume might not be writable — degrade gracefully
-        pass
-
-
-def _save_uploaded(uploaded_file) -> Path:
-    """Save a Streamlit-uploaded file into the working dir."""
-    _ensure_dirs()
-    target = WORKING_DIR / uploaded_file.name
-    target.write_bytes(uploaded_file.getbuffer())
-    return target
-
-
-def _generate_demo_files() -> list[Path]:
-    """Run the synthetic generator → 3 standard demo workbooks."""
-    _ensure_dirs()
-    # Wipe working dir so we don't accumulate stale files
-    if WORKING_DIR.exists():
-        for p in WORKING_DIR.glob("*.xlsx"):
-            try:
-                p.unlink()
-            except Exception:
-                pass
-    return generate_synthetic(WORKING_DIR, seed=43)
-
-
-def _list_available_files() -> list[Path]:
-    if not WORKING_DIR.exists():
-        return []
-    return sorted(WORKING_DIR.glob("*.xlsx"))
-
 
 def _list_sheets(path: Path) -> list[str]:
     wb = load_workbook(path, read_only=True, data_only=True)
@@ -635,147 +591,6 @@ def _render_xlsx_full(path: Path, sheet_name: str, height: int = 560):
 
 
 # ===========================================================================
-# Helpers — run persistence
-# ===========================================================================
-
-def _serialize_observations(observations) -> pd.DataFrame:
-    return pd.DataFrame([
-        {
-            "workbook": o.workbook, "sheet": o.sheet, "row_seq": o.row_seq,
-            "sample_date": o.sample_date,
-            "sample_time": str(o.sample_time) if o.sample_time else None,
-            "report_time": str(o.report_time) if o.report_time else None,
-            "batch_no": o.batch_no, "instrument_id": o.instrument_id,
-            "stage": o.stage, "sample_form": o.sample_form,
-            "appearance": o.appearance, "appearance_solution": o.appearance_solution,
-            "analyte": o.analyte, "analyte_canonical": o.analyte_canonical,
-            "column_index": o.column_index,
-            "rt": o.rt, "rrt": o.rrt, "value": o.value, "unit": o.unit,
-            "spec_min": o.spec_min, "spec_max": o.spec_max,
-            "spec_internal_min": o.spec_internal_min,
-            "spec_internal_max": o.spec_internal_max,
-            "pass": o.pass_, "raw_value": o.raw_value,
-            "mapping_confidence": o.mapping_confidence,
-        }
-        for o in observations
-    ])
-
-
-def _serialize_dq_issues(dq_issues) -> pd.DataFrame:
-    return pd.DataFrame([
-        {
-            "workbook": d.workbook, "sheet": d.sheet, "row_seq": d.row_seq,
-            "column": d.column, "rule": d.rule, "severity": d.severity,
-            "raw_value": str(d.raw_value), "repaired_value": str(d.repaired_value),
-            "note": d.note,
-        }
-        for d in dq_issues
-    ])
-
-
-def _serialize_mappings(mappings) -> pd.DataFrame:
-    return pd.DataFrame([
-        {
-            "workbook": m.workbook, "sheet": m.sheet,
-            "column_index": m.column_index, "raw_label": m.raw_label,
-            "role": m.role, "canonical": m.canonical,
-            "confidence": m.confidence, "rationale": m.rationale,
-            "source": m.source,
-        }
-        for m in mappings
-    ])
-
-
-def _save_run(
-    run_id: str,
-    input_file: Path,
-    result,
-    tidy_xlsx: Path,
-    same_fmt_xlsx: Path,
-    duration_s: float,
-) -> Path:
-    """Persist all artifacts for one run into RUNS_DIR/<run_id>/."""
-    run_dir = RUNS_DIR / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy input + outputs
-    shutil.copy(input_file, run_dir / "input.xlsx")
-    shutil.copy(tidy_xlsx, run_dir / "tidy.xlsx")
-    shutil.copy(same_fmt_xlsx, run_dir / "same_format.xlsx")
-
-    # Serialize tables
-    obs_df = _serialize_observations(result.observations)
-    dq_df = _serialize_dq_issues(result.dq_issues)
-    map_df = _serialize_mappings(result.mappings)
-
-    obs_df.to_parquet(run_dir / "observations.parquet")
-    dq_df.to_parquet(run_dir / "dq_issues.parquet")
-    map_df.to_parquet(run_dir / "mappings.parquet")
-
-    # Summary
-    n_violations = int((obs_df["pass"] == False).sum()) if not obs_df.empty else 0
-    n_pass = int((obs_df["pass"] == True).sum()) if not obs_df.empty else 0
-    pass_rate = round(100 * n_pass / max(n_pass + n_violations, 1), 1)
-
-    summary = {
-        "run_id": run_id,
-        "file_name": input_file.name,
-        "input_size_bytes": int(input_file.stat().st_size),
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "duration_s": round(duration_s, 2),
-        "n_observations": int(len(obs_df)),
-        "n_dq_issues": int(len(dq_df)),
-        "n_mappings": int(len(map_df)),
-        "n_violations": n_violations,
-        "n_pass": n_pass,
-        "pass_rate_pct": pass_rate,
-        "low_confidence_mappings": int(((map_df["confidence"] < 0.5)
-                                        & (map_df["role"] != "ignored")).sum())
-                                   if not map_df.empty else 0,
-        "sheets_count": result.profiles and len(result.profiles) or 0,
-    }
-    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
-    return run_dir
-
-
-def _list_runs() -> list[dict]:
-    if not RUNS_DIR.exists():
-        return []
-    runs = []
-    for d in sorted(RUNS_DIR.iterdir(), key=lambda p: p.name, reverse=True):
-        if not d.is_dir():
-            continue
-        summary_path = d / "summary.json"
-        if not summary_path.exists():
-            continue
-        try:
-            summary = json.loads(summary_path.read_text())
-            runs.append(summary)
-        except Exception:
-            continue
-    return runs
-
-
-def _load_run(run_id: str) -> dict | None:
-    run_dir = RUNS_DIR / run_id
-    summary_path = run_dir / "summary.json"
-    if not summary_path.exists():
-        return None
-    summary = json.loads(summary_path.read_text())
-    obs = pd.read_parquet(run_dir / "observations.parquet")
-    dq = pd.read_parquet(run_dir / "dq_issues.parquet")
-    mp = pd.read_parquet(run_dir / "mappings.parquet")
-    return {
-        "run_id": run_id,
-        "dir": run_dir,
-        "summary": summary,
-        "observations": obs,
-        "dq_issues": dq,
-        "mappings": mp,
-    }
-
-
-# ===========================================================================
 # Sidebar
 # ===========================================================================
 
@@ -804,8 +619,6 @@ def _sidebar():
 
         st.markdown("---")
         st.caption(f"Catalog: `{CATALOG}`")
-        runs = _list_runs()
-        st.caption(f"Stored runs: **{len(runs)}**")
 
         st.markdown(
             "<div class='footer-note' style='padding-top:1rem;'>"
@@ -1588,7 +1401,6 @@ st.markdown(
     f"""
     <div class='footer-note'>
        <strong>Quality Team Intelligence</strong> · catalog <code>{CATALOG}</code> ·
-       runs cached at <code>{RUNS_DIR}</code> (per-session) ·
        <a href='https://github.com/AbhinavJFT/primeinsurance-poc' target='_blank'>repo</a>
     </div>
     """,
