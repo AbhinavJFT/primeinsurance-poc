@@ -72,6 +72,11 @@ if [[ "$DESTROY" -eq 1 ]]; then
   exit 0
 fi
 
+step "Vendor app deps"
+if [[ -x apps/quality_team_intelligence/vendor.sh ]]; then
+  apps/quality_team_intelligence/vendor.sh
+fi
+
 step "Validate bundle"
 "$DBX" bundle validate --target "$TARGET" -p "$PROFILE"
 

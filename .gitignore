@@ -9,3 +9,6 @@ data/mock_sharepoint/output/*
 data/mock_sharepoint/input/*.xlsx
 data/gold_local/
 data/bronze_landing/
+# Vendored deps for the Streamlit app must be committed — bundle deploy
+# respects .gitignore, so excluding them here also excludes them from upload.
+# Run apps/quality_team_intelligence/vendor.sh whenever quality_core changes.

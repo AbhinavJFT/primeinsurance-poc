@@ -119,10 +119,10 @@ SELECT 'mapping_low_confidence' AS reason, workbook, sheet,
 FROM {CATALOG}.silver.column_mapping_log
 WHERE confidence < 0.5 AND role <> 'ignored'
 UNION ALL
-SELECT 'dq_warning' AS reason, workbook, sheet, row_seq, column,
+SELECT 'dq_unparseable' AS reason, workbook, sheet, row_seq, column,
        NULL AS metric, rule || ': ' || note AS note
 FROM {CATALOG}.silver.dq_issues
-WHERE severity = 'warning'
+WHERE severity = 'unparseable'
 """)
 
 display(spark.table(f"{CATALOG}.silver.quarantine_review"))
