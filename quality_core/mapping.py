@@ -180,9 +180,21 @@ def map_columns_mock(profile: SheetProfile, schema: dict, *, workbook: str
 
     for meta in profile.meta_columns:
         canonical, conf, rationale = _best_meta_match(meta.raw_label, synonyms)
-        # Column A "S.No" is meaningful but not in canonical schema -> ignored.
-        role = "ignored" if canonical is None and meta.column_index == 1 else (
-            "meta" if canonical else "ignored")
+        if canonical is None:
+            if meta.column_index == 1:
+                # Column A "S.No" is meaningful but not in the canonical
+                # schema — keep ignored. Use raw label as canonical so the
+                # silver column-mapping table never has a null canonical.
+                canonical = meta.raw_label
+                role = "ignored"
+                rationale = "S.No column — kept raw label, role=ignored"
+            else:
+                # No canonical match — keep the raw label as-is.
+                canonical = meta.raw_label
+                role = "meta"
+                rationale = "no canonical match — kept raw label as-is"
+        else:
+            role = "meta"
         mappings.append(ColumnMapping(
             workbook=workbook, sheet=profile.sheet_name,
             raw_label=meta.raw_label, column_index=meta.column_index,
@@ -193,11 +205,11 @@ def map_columns_mock(profile: SheetProfile, schema: dict, *, workbook: str
     for imp in profile.impurity_columns:
         canonical, conf, rationale = _best_analyte_match(imp.raw_label, analytes)
         if canonical is None:
-            # fall back to a deterministic slug so each column still pivots
-            slug = re.sub(r"[^A-Za-z0-9]+", "_", imp.raw_label.strip()).strip("_")
-            canonical = f"unknown_{slug}"
-            rationale = "no canonical analyte match — slug fallback"
-            conf = 0.30
+            # No canonical match — keep the raw label as-is so the column
+            # still pivots into observations and the canonical is non-null.
+            canonical = imp.raw_label
+            rationale = "no canonical match — kept raw label as-is"
+            conf = max(conf, 0.30)
         mappings.append(ColumnMapping(
             workbook=workbook, sheet=profile.sheet_name,
             raw_label=imp.raw_label, column_index=imp.column_index,
