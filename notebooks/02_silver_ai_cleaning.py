@@ -116,17 +116,83 @@ map_rows = [
     for r in results for m in r.mappings
 ]
 
+# Explicit schemas avoid Spark Connect's "CANNOT_DETERMINE_TYPE" error
+# when ANY column is all-None for a particular session (e.g. every meta
+# column fell below the rapidfuzz match threshold, or every observation
+# in a session had no spec bounds → pass=None across the board, etc.).
+# Inference is fragile; declaring types is the only robust answer.
+from pyspark.sql.types import (
+    StructType, StructField, StringType, LongType, DoubleType, BooleanType,
+    DateType,
+)
+
+OBS_SCHEMA = StructType([
+    StructField("workbook",            StringType(),  True),
+    StructField("sheet",               StringType(),  True),
+    StructField("row_seq",             LongType(),    True),
+    StructField("sample_date",         DateType(),    True),
+    StructField("sample_time",         StringType(),  True),
+    StructField("report_time",         StringType(),  True),
+    StructField("batch_no",            StringType(),  True),
+    StructField("instrument_id",       StringType(),  True),
+    StructField("stage",               StringType(),  True),
+    StructField("sample_form",         StringType(),  True),
+    StructField("appearance",          StringType(),  True),
+    StructField("appearance_solution", StringType(),  True),
+    StructField("analyte",             StringType(),  True),
+    StructField("analyte_canonical",   StringType(),  True),
+    StructField("column_index",        LongType(),    True),
+    StructField("rt",                  DoubleType(),  True),
+    StructField("rrt",                 DoubleType(),  True),
+    StructField("value",               DoubleType(),  True),
+    StructField("unit",                StringType(),  True),
+    StructField("spec_min",            DoubleType(),  True),
+    StructField("spec_max",            DoubleType(),  True),
+    StructField("spec_internal_min",   DoubleType(),  True),
+    StructField("spec_internal_max",   DoubleType(),  True),
+    StructField("pass",                BooleanType(), True),
+    StructField("raw_value",           StringType(),  True),
+    StructField("mapping_confidence",  DoubleType(),  True),
+    StructField("session_id",          StringType(),  False),
+])
+
+DQ_SCHEMA = StructType([
+    StructField("workbook",       StringType(), True),
+    StructField("sheet",          StringType(), True),
+    StructField("row_seq",        LongType(),   True),
+    StructField("column",         StringType(), True),
+    StructField("rule",           StringType(), True),
+    StructField("severity",       StringType(), True),
+    StructField("raw_value",      StringType(), True),
+    StructField("repaired_value", StringType(), True),
+    StructField("note",           StringType(), True),
+    StructField("session_id",     StringType(), False),
+])
+
+MAP_SCHEMA = StructType([
+    StructField("workbook",     StringType(), True),
+    StructField("sheet",        StringType(), True),
+    StructField("column_index", LongType(),   True),
+    StructField("raw_label",    StringType(), True),
+    StructField("role",         StringType(), True),
+    StructField("canonical",    StringType(), True),
+    StructField("confidence",   DoubleType(), True),
+    StructField("rationale",    StringType(), True),
+    StructField("source",       StringType(), True),
+    StructField("session_id",   StringType(), False),
+])
+
 # Append + mergeSchema + partition by session_id so multiple sessions
 # coexist in the same tables. App-side queries filter by session_id.
-(spark.createDataFrame(obs_rows)
+(spark.createDataFrame(obs_rows, schema=OBS_SCHEMA)
    .write.format("delta").mode("append").option("mergeSchema", "true")
    .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.observations_long"))
-(spark.createDataFrame(dq_rows)
+(spark.createDataFrame(dq_rows, schema=DQ_SCHEMA)
    .write.format("delta").mode("append").option("mergeSchema", "true")
    .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.dq_issues"))
-(spark.createDataFrame(map_rows)
+(spark.createDataFrame(map_rows, schema=MAP_SCHEMA)
    .write.format("delta").mode("append").option("mergeSchema", "true")
    .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.column_mapping_log"))
