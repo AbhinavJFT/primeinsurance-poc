@@ -1370,58 +1370,62 @@ def render_home():
 # History view
 # ===========================================================================
 
+def _list_sessions() -> pd.DataFrame:
+    """Every session ever processed (excluding the legacy main-pipeline tag),
+    newest first. Sources `gold.fact_observation` directly so no /tmp state
+    is involved."""
+    return run_query(f"""
+        SELECT
+          session_id,
+          MIN(workbook)            AS first_workbook,
+          COUNT(DISTINCT workbook) AS n_workbooks,
+          COUNT(*)                 AS n_observations,
+          ROUND(100.0 * SUM(CASE WHEN pass = true THEN 1 ELSE 0 END)
+              / NULLIF(SUM(CASE WHEN pass IS NOT NULL THEN 1 ELSE 0 END), 0), 1) AS pass_rate_pct
+        FROM {CATALOG}.gold.fact_observation
+        WHERE session_id <> 'legacy_main_pipeline'
+        GROUP BY session_id
+        ORDER BY session_id DESC
+    """)
+
+
 def render_history():
     st.title("History")
     st.markdown(
         "<div style='opacity:0.75;font-size:1.0rem;margin-bottom:1rem;'>"
-        "Every interactive run, newest first. Click <strong>Open</strong> to re-load "
-        "that run's results." "</div>",
+        "Every session ever processed by the app. Pick one to re-open its "
+        "results."
+        "</div>",
         unsafe_allow_html=True,
     )
 
-    runs = _list_runs()
-    if not runs:
-        st.info("No runs yet. Head to Home and process a workbook.")
+    df = _list_sessions()
+    if df.empty:
+        st.info("No sessions yet. Head to Home and process a workbook.")
         return
 
-    # Build a display dataframe
-    df = pd.DataFrame(runs)
-    df["started"] = pd.to_datetime(df["started_at"]).dt.strftime("%Y-%m-%d %H:%M UTC")
-    show_cols = [
-        "run_id", "file_name", "started", "duration_s",
-        "n_observations", "n_dq_issues", "n_violations", "pass_rate_pct",
-    ]
-    display = df[show_cols].rename(columns={
-        "run_id": "Run ID", "file_name": "File", "started": "When",
-        "duration_s": "Duration (s)",
-        "n_observations": "Observations", "n_dq_issues": "DQ fixes",
-        "n_violations": "Violations", "pass_rate_pct": "Pass %",
-    })
-
-    # KPI strip across all runs
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Runs", f"{len(df):,}")
-    k2.metric("Total observations", f"{df['n_observations'].sum():,}")
-    k3.metric("Total DQ fixes", f"{df['n_dq_issues'].sum():,}")
+    k1.metric("Sessions", f"{len(df):,}")
+    k2.metric("Total workbooks", f"{int(df['n_workbooks'].sum()):,}")
+    k3.metric("Total observations", f"{int(df['n_observations'].sum()):,}")
     k4.metric("Avg pass rate", f"{df['pass_rate_pct'].mean():.1f}%")
 
     st.markdown("&nbsp;")
 
-    # Use selection-enabled dataframe
     selection = st.dataframe(
-        display, use_container_width=True, hide_index=True, height=420,
+        df, use_container_width=True, hide_index=True, height=420,
         on_select="rerun", selection_mode="single-row",
     )
     sel_rows = selection.selection.rows if selection and selection.selection else []
     if sel_rows:
-        sel_run = display.iloc[sel_rows[0]]["Run ID"]
+        sel_sid = df.iloc[sel_rows[0]]["session_id"]
         c1, c2 = st.columns([3, 1])
         with c1:
-            st.info(f"Selected run **{sel_run}**.")
+            st.info(f"Selected session **{sel_sid}**.")
         with c2:
-            if st.button("Open this run →", type="primary",
+            if st.button("Open this session", type="primary",
                          use_container_width=True, key="open_hist"):
-                st.session_state.current_run_id = sel_run
+                st.session_state.session_id = sel_sid
                 st.session_state.view = "home"
                 st.session_state.stage = "results"
                 st.rerun()
@@ -1441,37 +1445,30 @@ def render_dashboard():
         unsafe_allow_html=True,
     )
 
-    # ── Section A: Interactive runs ─────────────────────────────────────────
-    runs = _list_runs()
-    st.markdown("## App runs (interactive)")
-    if not runs:
-        st.info("No interactive runs yet.")
+    # ── Section A: App sessions (queried from gold) ─────────────────────────
+    sessions = _list_sessions()
+    st.markdown("## App sessions")
+    if sessions.empty:
+        st.info("No app sessions yet.")
     else:
-        df = pd.DataFrame(runs)
-        df["started"] = pd.to_datetime(df["started_at"])
-
-        a1, a2, a3, a4, a5 = st.columns(5)
-        a1.metric("Runs", f"{len(df):,}")
-        a2.metric("Files cleaned", f"{df['file_name'].count():,}")
-        a3.metric("Total obs", f"{df['n_observations'].sum():,}")
-        a4.metric("Total fixes", f"{df['n_dq_issues'].sum():,}")
-        a5.metric("Avg pass %", f"{df['pass_rate_pct'].mean():.1f}%")
+        df = sessions.copy()
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Sessions", f"{len(df):,}")
+        a2.metric("Total workbooks", f"{int(df['n_workbooks'].sum()):,}")
+        a3.metric("Total observations", f"{int(df['n_observations'].sum()):,}")
+        a4.metric("Avg pass %", f"{df['pass_rate_pct'].mean():.1f}%")
 
         st.markdown("&nbsp;")
 
-        # Charts
         c1, c2 = st.columns(2, gap="large")
         with c1:
-            st.markdown("**Runs over time**")
-            by_day = (df.set_index("started")
-                        .resample("D").size()
-                        .rename("runs"))
-            if not by_day.empty:
-                st.bar_chart(by_day, color=PRIMARY, height=260)
-
+            st.markdown("**Workbooks per session**")
+            ser = df.set_index("session_id")["n_workbooks"].sort_index()
+            if not ser.empty:
+                st.bar_chart(ser, color=PRIMARY, height=260)
         with c2:
-            st.markdown("**Avg pass rate per run**")
-            ser = df.set_index("started")["pass_rate_pct"].sort_index()
+            st.markdown("**Pass rate per session**")
+            ser = df.set_index("session_id")["pass_rate_pct"].sort_index()
             if not ser.empty:
                 st.line_chart(ser, color=ACCENT_GREEN, height=260)
 
