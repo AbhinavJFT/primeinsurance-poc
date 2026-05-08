@@ -309,6 +309,150 @@ def _read_sheet_preview(path: Path, sheet_name: str, max_rows: int = 22) -> pd.D
     return pd.DataFrame(padded, columns=cols)
 
 
+# ===========================================================================
+# Helpers — Databricks session orchestration (session-scoped pipeline)
+# ===========================================================================
+
+INPUT_VOLUME_BASE = f"/Volumes/{CATALOG}/bronze/sharepoint_input/sessions"
+OUTPUT_VOLUME_BASE = f"/Volumes/{CATALOG}/bronze/sharepoint_output/sessions"
+PIPELINE_JOB_NAME_HINT = JOB_NAME_HINT  # bundle name "quality_de" matches the job
+
+
+def _mint_session_id() -> str:
+    """YYYY-MM-DD-hhmmss-<6hex> — human-readable, sortable, unique-enough."""
+    import secrets
+    now = datetime.now(timezone.utc)
+    suffix = secrets.token_hex(3)
+    return f"{now.strftime('%Y-%m-%d-%H%M%S')}-{suffix}"
+
+
+def _resolve_pipeline_job_id() -> int:
+    """Look up the medallion pipeline job's ID by name hint."""
+    w = _ws_client()
+    if w is None:
+        raise RuntimeError("Workspace client unavailable; cannot trigger job")
+    for j in w.jobs.list():
+        name = (j.settings.name if j.settings else "") or ""
+        if PIPELINE_JOB_NAME_HINT in name:
+            return j.job_id
+    raise RuntimeError(
+        f"No job found whose name contains {PIPELINE_JOB_NAME_HINT!r}"
+    )
+
+
+def _generate_session_files(session_id: str, n_files: int) -> list[Path]:
+    """Generate N synthetic workbooks for this session in /tmp/qde_session/<sid>/.
+    Files alternate API/KSM/Intermediates with varied seeds so each looks
+    distinct."""
+    from generate_quality_data import build_workbook, workbook_specs
+    local_dir = Path("/tmp/qde_session") / session_id
+    local_dir.mkdir(parents=True, exist_ok=True)
+    for old in local_dir.glob("*.xlsx"):
+        try:
+            old.unlink()
+        except Exception:
+            pass
+    specs = workbook_specs()
+    keys = list(specs.keys())
+    written: list[Path] = []
+    for i in range(n_files):
+        spec = specs[keys[i % len(keys)]]
+        wb = build_workbook(spec, seed=43 + i)
+        base = spec.filename.replace(".xlsx", "")
+        target = local_dir / f"{base}_{i:03d}.xlsx"
+        wb.save(target)
+        written.append(target)
+    return written
+
+
+def _upload_session_files(session_id: str, local_files: list[Path]) -> list[str]:
+    """Upload local files to /Volumes/.../sharepoint_input/sessions/<sid>/.
+    Returns the list of remote volume paths."""
+    w = _ws_client()
+    if w is None:
+        raise RuntimeError("Workspace client unavailable; cannot upload")
+    target_dir = f"{INPUT_VOLUME_BASE}/{session_id}"
+    uploaded: list[str] = []
+    for f in local_files:
+        remote = f"{target_dir}/{f.name}"
+        with open(f, "rb") as fh:
+            w.files.upload(remote, fh, overwrite=True)
+        uploaded.append(remote)
+    return uploaded
+
+
+def _trigger_pipeline(session_id: str) -> int:
+    """Trigger the medallion job with this session_id. Returns run_id."""
+    w = _ws_client()
+    if w is None:
+        raise RuntimeError("Workspace client unavailable; cannot trigger job")
+    job_id = _resolve_pipeline_job_id()
+    run = w.jobs.run_now(
+        job_id=job_id,
+        notebook_params={"session_id": session_id},
+    )
+    return run.run_id
+
+
+def _poll_run(run_id: int) -> dict:
+    """Single poll: returns dict with overall + per-task status."""
+    w = _ws_client()
+    if w is None:
+        raise RuntimeError("Workspace client unavailable; cannot poll run")
+    run = w.jobs.get_run(run_id=run_id)
+    state = run.state
+    return {
+        "life_cycle_state": (state.life_cycle_state.value
+                              if state and state.life_cycle_state else "UNKNOWN"),
+        "result_state": (state.result_state.value
+                          if state and state.result_state else None),
+        "state_message": (state.state_message if state else "") or "",
+        "tasks": [
+            {
+                "task_key": t.task_key,
+                "life_cycle_state": (t.state.life_cycle_state.value
+                                      if t.state and t.state.life_cycle_state else "PENDING"),
+                "result_state": (t.state.result_state.value
+                                  if t.state and t.state.result_state else None),
+                "start_time": t.start_time,
+                "end_time": t.end_time,
+                "state_message": (t.state.state_message if t.state else "") or "",
+            }
+            for t in (run.tasks or [])
+        ],
+    }
+
+
+def _clear_session_table_rows(session_id: str) -> None:
+    """Delete rows tagged with session_id from all 5 tables. Used by Retry
+    (re-trigger after partial run) and full Discard."""
+    for table in [
+        f"{CATALOG}.bronze.raw_workbooks",
+        f"{CATALOG}.silver.observations_long",
+        f"{CATALOG}.silver.dq_issues",
+        f"{CATALOG}.silver.column_mapping_log",
+        f"{CATALOG}.gold.fact_observation",
+    ]:
+        try:
+            run_query(f"DELETE FROM {table} WHERE session_id = '{session_id}'")
+        except Exception as e:
+            print(f"  ({table} cleanup skipped: {e})")
+
+
+def _discard_session(session_id: str) -> None:
+    """Full discard: delete input subfolder AND any rows already written."""
+    w = _ws_client()
+    target_dir = f"{INPUT_VOLUME_BASE}/{session_id}"
+    if w is not None:
+        try:
+            for f in w.files.list_directory_contents(target_dir):
+                w.files.delete(f.path)
+            w.files.delete_directory(target_dir)
+        except Exception as e:
+            print(f"  (input cleanup skipped: {e})")
+    _clear_session_table_rows(session_id)
+
+
 # ---------------------------------------------------------------------------
 # Excel-shaped renderer (preserves merged cells, fills, fonts)
 # ---------------------------------------------------------------------------
