@@ -1618,21 +1618,52 @@ def render_dashboard():
     except Exception:
         st.warning("Couldn't load column breakdown.")
 
-    # Impurity trend
+    # Trends over time — split into two charts because the main compound
+    # (assay) sits around 99% while impurities sit around 0.001%-0.1%.
     st.markdown("&nbsp;")
-    st.markdown("**Impurity levels over time** (averaged across batches)")
+    st.markdown("**Trends over time** (averaged across batches)")
     try:
         trend = run_query(f"""
-            SELECT analyte_canonical, sample_date, avg_value
-            FROM {CATALOG}.gold.mv_impurity_trend
+            SELECT analyte_canonical,
+                   sample_date,
+                   AVG(value)    AS avg_value,
+                   AVG(spec_min) AS avg_spec_min
+            FROM {CATALOG}.gold.fact_observation
+            WHERE sample_date IS NOT NULL
+              AND analyte_canonical IS NOT NULL
+            GROUP BY analyte_canonical, sample_date
             ORDER BY sample_date
         """)
         if not trend.empty:
-            pivot = trend.pivot_table(
-                index="sample_date", columns="analyte_canonical",
-                values="avg_value", aggfunc="mean",
-            )
-            st.line_chart(pivot, height=380)
+            assay_trend = trend[trend["avg_spec_min"].notna()]
+            impurity_trend = trend[trend["avg_spec_min"].isna()]
+
+            st.markdown("**Main compound purity** &nbsp; "
+                        "<span style='opacity:0.6;font-size:0.85rem;'>"
+                        "higher is better; spec is typically ≥ 98.5%</span>",
+                        unsafe_allow_html=True)
+            if not assay_trend.empty:
+                pivot_a = assay_trend.pivot_table(
+                    index="sample_date", columns="analyte_canonical",
+                    values="avg_value", aggfunc="mean",
+                )
+                st.line_chart(pivot_a, height=300)
+            else:
+                st.caption("No main-compound trend data yet.")
+
+            st.markdown("&nbsp;")
+            st.markdown("**Impurity levels** &nbsp; "
+                        "<span style='opacity:0.6;font-size:0.85rem;'>"
+                        "lower is better; specs are typically ≤ 0.10–0.50%</span>",
+                        unsafe_allow_html=True)
+            if not impurity_trend.empty:
+                pivot = impurity_trend.pivot_table(
+                    index="sample_date", columns="analyte_canonical",
+                    values="avg_value", aggfunc="mean",
+                )
+                st.line_chart(pivot, height=300)
+            else:
+                st.caption("No impurity trend data yet.")
     except Exception:
         st.warning("Couldn't load trend.")
 
