@@ -21,10 +21,12 @@
 dbutils.widgets.text("catalog", "quality_de")
 dbutils.widgets.text("volume_input", "sharepoint_input")
 dbutils.widgets.text("llm_endpoint", "databricks-gpt-oss-20b")
+dbutils.widgets.text("session_id", "legacy_main_pipeline")
 
 CATALOG = dbutils.widgets.get("catalog")
 VOL_IN = dbutils.widgets.get("volume_input")
 ENDPOINT = dbutils.widgets.get("llm_endpoint")
+SESSION_ID = dbutils.widgets.get("session_id")
 
 # COMMAND ----------
 
@@ -53,9 +55,16 @@ except Exception as e:
 
 # COMMAND ----------
 
-INPUT_PATH = Path(f"/Volumes/{CATALOG}/bronze/{VOL_IN}")
+# Process only the files registered for this session in bronze. The legacy
+# main pipeline still scans the volume root via the bronze rows it produced.
+bronze_for_session = (
+    spark.table(f"{CATALOG}.bronze.raw_workbooks")
+         .filter(f"session_id = '{SESSION_ID}'")
+)
+input_paths = [Path(r.source_path) for r in bronze_for_session.collect()]
+
 results = []
-for p in sorted(INPUT_PATH.glob("*.xlsx")):
+for p in input_paths:
     print(f"processing {p.name}…")
     res = process_workbook(p, llm_client=llm_client)
     print(f"  {len(res.observations)} obs | {len(res.dq_issues)} dq | {len(res.mappings)} mappings")
@@ -77,31 +86,39 @@ obs_rows = [
      "spec_min": o.spec_min, "spec_max": o.spec_max,
      "spec_internal_min": o.spec_internal_min, "spec_internal_max": o.spec_internal_max,
      "pass": o.pass_, "raw_value": o.raw_value,
-     "mapping_confidence": o.mapping_confidence}
+     "mapping_confidence": o.mapping_confidence,
+     "session_id": SESSION_ID}
     for r in results for o in r.observations
 ]
 dq_rows = [
     {"workbook": d.workbook, "sheet": d.sheet, "row_seq": d.row_seq,
      "column": d.column, "rule": d.rule, "severity": d.severity,
      "raw_value": str(d.raw_value), "repaired_value": str(d.repaired_value),
-     "note": d.note}
+     "note": d.note,
+     "session_id": SESSION_ID}
     for r in results for d in r.dq_issues
 ]
 map_rows = [
     {"workbook": m.workbook, "sheet": m.sheet, "column_index": m.column_index,
      "raw_label": m.raw_label, "role": m.role, "canonical": m.canonical,
-     "confidence": m.confidence, "rationale": m.rationale, "source": m.source}
+     "confidence": m.confidence, "rationale": m.rationale, "source": m.source,
+     "session_id": SESSION_ID}
     for r in results for m in r.mappings
 ]
 
+# Append + mergeSchema + partition by session_id so multiple sessions
+# coexist in the same tables. App-side queries filter by session_id.
 (spark.createDataFrame(obs_rows)
-   .write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+   .write.format("delta").mode("append").option("mergeSchema", "true")
+   .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.observations_long"))
 (spark.createDataFrame(dq_rows)
-   .write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+   .write.format("delta").mode("append").option("mergeSchema", "true")
+   .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.dq_issues"))
 (spark.createDataFrame(map_rows)
-   .write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+   .write.format("delta").mode("append").option("mergeSchema", "true")
+   .partitionBy("session_id")
    .saveAsTable(f"{CATALOG}.silver.column_mapping_log"))
 
 print(f"silver.observations_long  rows={len(obs_rows)}")
