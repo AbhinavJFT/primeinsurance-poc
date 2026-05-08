@@ -22,6 +22,15 @@ import yaml
 
 from .models import ColumnMapping, ImpurityProfile, MetaColumn, SheetProfile
 
+# Import the OpenAI rate-limit class lazily — the library may not be installed
+# in environments that only use the deterministic mock mapper. The fallback
+# path treats anything that looks like a 429 the same way.
+try:
+    from openai import RateLimitError as _OpenAIRateLimitError  # type: ignore
+except Exception:  # pragma: no cover
+    class _OpenAIRateLimitError(Exception):
+        pass
+
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "canonical_quality_schema.yaml"
 
@@ -196,7 +205,25 @@ def map_columns_llm(profile: SheetProfile, schema: dict, *, workbook: str,
 
 def map_columns(profile: SheetProfile, schema: dict, *, workbook: str,
                 llm_client=None) -> list[ColumnMapping]:
-    """Dispatch to LLM mapper if a client is provided AND MOCK_LLM is not set."""
+    """Dispatch to LLM mapper if a client is provided AND MOCK_LLM is not set.
+
+    Falls back to the deterministic synonym matcher when the Foundation Model
+    endpoint rate-limits us (HTTP 429) or any other transport error occurs.
+    The fallback is per-sheet, so a session of N workbooks can finish even
+    if some sheets exceed the workspace pay-per-token throughput cap.
+    """
     if llm_client is not None and os.environ.get("MOCK_LLM", "").lower() not in ("1", "true", "yes"):
-        return map_columns_llm(profile, schema, workbook=workbook, client=llm_client)
+        try:
+            return map_columns_llm(profile, schema, workbook=workbook, client=llm_client)
+        except _OpenAIRateLimitError as e:
+            print(f"  [mapping] FM rate-limit (429) on sheet "
+                  f"{profile.sheet_name!r}; falling back to mock_synonyms: {e}")
+            return map_columns_mock(profile, schema, workbook=workbook)
+        except Exception as e:
+            # Any other LLM-side failure (network blip, bad token, server
+            # 5xx) → fall back so the run completes. The mapping_log will
+            # show source=mock_synonyms for these sheets.
+            print(f"  [mapping] LLM call failed on sheet "
+                  f"{profile.sheet_name!r}; falling back to mock_synonyms: {e}")
+            return map_columns_mock(profile, schema, workbook=workbook)
     return map_columns_mock(profile, schema, workbook=workbook)
