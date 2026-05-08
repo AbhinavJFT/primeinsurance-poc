@@ -650,13 +650,14 @@ def _render_home_empty():
             "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
             "How many synthetic workbooks should this session produce? "
             "Files alternate between API, KSM, and Intermediates types. "
-            "Cap is 25 to stay under the Foundation Model rate limit."
+            "Pipeline runs the deterministic cleaner (no LLM), so up to "
+            "100 files complete in a couple of minutes."
             "</div>",
             unsafe_allow_html=True,
         )
         n_files = st.slider(
             "Number of files",
-            min_value=1, max_value=25, value=20, step=1,
+            min_value=1, max_value=100, value=20, step=1,
             key="gen_count",
         )
         if st.button("Generate", type="primary",

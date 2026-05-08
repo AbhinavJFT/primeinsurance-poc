@@ -151,5 +151,3 @@ SELECT 'dq_unparseable' AS reason, workbook, sheet, row_seq, column,
 FROM {CATALOG}.silver.dq_issues
 WHERE severity = 'unparseable'
 """)
-
-display(spark.table(f"{CATALOG}.silver.quarantine_review"))

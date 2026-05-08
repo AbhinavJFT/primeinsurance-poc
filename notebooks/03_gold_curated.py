@@ -133,7 +133,3 @@ WHERE pass = false
 GROUP BY analyte_canonical, workbook, sheet
 ORDER BY violation_count DESC
 """)
-
-# COMMAND ----------
-
-display(spark.table(f"{CATALOG}.gold.mv_batch_pass_rate"))

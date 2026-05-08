@@ -57,7 +57,3 @@ result = run_pipeline(
     },
     spark=spark,
 )
-
-# COMMAND ----------
-
-display(spark.table(f"{CATALOG}.bronze.raw_workbooks"))
