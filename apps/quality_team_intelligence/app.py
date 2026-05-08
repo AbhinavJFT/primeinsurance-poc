@@ -758,8 +758,67 @@ def _render_home_staged():
         st.warning(f"Preview unavailable: {e}")
 
 
+TASK_LABELS = {
+    "setup":              ("Environment setup",   "Initializing schemas, volumes, and grants"),
+    "bronze_ingest":      ("Bronze ingest",       "Copying input files into the lakehouse"),
+    "silver_ai_cleaning": ("Silver cleaning",     "Schema inference, column mapping, and value cleaning"),
+    "gold_curated":       ("Gold curation",       "Building fact table, dimensions, and materialized views"),
+    "export_sharepoint":  ("Output export",       "Writing same-format and tidy xlsx files"),
+}
+
+# Colors for status cards (text-only, no emojis)
+_STATUS_STYLES = {
+    "SUCCESS":  {"bg": "#ECFDF5", "border": "#10B981", "fg": "#065F46", "label": "DONE"},
+    "RUNNING":  {"bg": "#EFF6FF", "border": "#3B82F6", "fg": "#1E40AF", "label": "RUNNING"},
+    "PENDING":  {"bg": "#F8FAFC", "border": "#CBD5E1", "fg": "#64748B", "label": "QUEUED"},
+    "BLOCKED":  {"bg": "#F8FAFC", "border": "#CBD5E1", "fg": "#64748B", "label": "QUEUED"},
+    "FAILED":   {"bg": "#FEF2F2", "border": "#EF4444", "fg": "#991B1B", "label": "FAILED"},
+    "TIMEDOUT": {"bg": "#FEF2F2", "border": "#EF4444", "fg": "#991B1B", "label": "TIMEOUT"},
+    "CANCELED": {"bg": "#FEF2F2", "border": "#EF4444", "fg": "#991B1B", "label": "CANCELED"},
+    "SKIPPED":  {"bg": "#FAFAF9", "border": "#A8A29E", "fg": "#78716C", "label": "SKIPPED"},
+}
+
+
+def _task_card_html(task_key: str, status_key: str, elapsed_str: str) -> str:
+    label, subtitle = TASK_LABELS.get(task_key, (task_key, ""))
+    style = _STATUS_STYLES.get(status_key, _STATUS_STYLES["PENDING"])
+    pulse_css = ("animation: pulse 1.4s ease-in-out infinite;"
+                 if status_key == "RUNNING" else "")
+    return f"""
+    <div style="
+      background: {style['bg']};
+      border: 1px solid {style['border']};
+      border-left: 6px solid {style['border']};
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      {pulse_css}
+    ">
+      <div style="flex:1; min-width:0;">
+        <div style="font-weight:600;font-size:1.05rem;color:#0F172A;">{label}</div>
+        <div style="opacity:0.7;font-size:0.85rem;margin-top:2px;color:#475569;">{subtitle}</div>
+      </div>
+      <div style="text-align:right;min-width:120px;">
+        <div style="
+          display:inline-block;
+          background:{style['border']};
+          color:white;
+          font-weight:700;
+          font-size:0.75rem;
+          letter-spacing:0.5px;
+          padding:3px 10px;
+          border-radius:999px;
+        ">{style['label']}</div>
+        <div style="opacity:0.7;font-size:0.85rem;margin-top:4px;color:#475569;">{elapsed_str}</div>
+      </div>
+    </div>
+    """
+
+
 def _render_home_running():
-    st.title("Pipeline running")
     sid = st.session_state.get("session_id")
     run_id = st.session_state.get("run_id")
     started_at = st.session_state.get("run_started_at") or time.time()
@@ -769,13 +828,31 @@ def _render_home_running():
         st.session_state.stage = "empty"
         st.rerun()
 
+    # Inject the pulse keyframes once; other CSS is inline per-card
+    st.markdown(
+        """
+        <style>
+        @keyframes pulse {
+          0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.35); }
+          70%  { box-shadow: 0 0 0 10px rgba(59,130,246,0);  }
+          100% { box-shadow: 0 0 0 0 rgba(59,130,246,0);     }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.title("Pipeline running")
+
     header = st.empty()
+    progress_bar = st.empty()
     body = st.empty()
     failure = st.empty()
 
     POLL_INTERVAL_S = 3
     TASK_ORDER = ["setup", "bronze_ingest", "silver_ai_cleaning",
                   "gold_curated", "export_sharepoint"]
+    n_total = len(TASK_ORDER)
 
     while True:
         elapsed = int(time.time() - started_at)
@@ -786,13 +863,50 @@ def _render_home_running():
             time.sleep(POLL_INTERVAL_S)
             continue
 
+        # Header card with metadata
         header.markdown(
-            f"Session **`{sid}`** &nbsp;·&nbsp; pipeline run `{run_id}` "
-            f"&nbsp;·&nbsp; **{elapsed // 60}m {elapsed % 60}s** elapsed"
+            f"""
+            <div style="
+              background: linear-gradient(135deg,#F8FAFC 0%,#EFF6FF 100%);
+              border: 1px solid #DBEAFE;
+              border-radius: 12px;
+              padding: 16px 20px;
+              margin-bottom: 16px;
+            ">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <div>
+                  <div style="font-size:0.78rem;letter-spacing:1px;color:#64748B;text-transform:uppercase;font-weight:600;">Session</div>
+                  <div style="font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;color:#0F172A;font-weight:600;">{sid}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.78rem;letter-spacing:1px;color:#64748B;text-transform:uppercase;font-weight:600;">Run</div>
+                  <div style="font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;color:#0F172A;font-weight:600;">{run_id}</div>
+                </div>
+                <div>
+                  <div style="font-size:0.78rem;letter-spacing:1px;color:#64748B;text-transform:uppercase;font-weight:600;">Elapsed</div>
+                  <div style="font-size:1.1rem;color:#0F172A;font-weight:700;">{elapsed // 60}m {elapsed % 60}s</div>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
         tasks_by_key = {t["task_key"]: t for t in poll["tasks"]}
-        rows = []
+
+        # Compute progress: count terminated-success tasks
+        n_done = sum(
+            1 for tk in TASK_ORDER
+            if tasks_by_key.get(tk, {}).get("life_cycle_state") == "TERMINATED"
+            and tasks_by_key.get(tk, {}).get("result_state") == "SUCCESS"
+        )
+        progress_bar.progress(
+            n_done / n_total,
+            text=f"{n_done} of {n_total} tasks complete",
+        )
+
+        # Task cards
+        cards = []
         for tk in TASK_ORDER:
             t = tasks_by_key.get(tk, {"life_cycle_state": "PENDING",
                                        "result_state": None,
@@ -801,17 +915,15 @@ def _render_home_running():
             lcs = t.get("life_cycle_state", "PENDING")
             rs = t.get("result_state")
             if lcs == "TERMINATED" and rs == "SUCCESS":
-                marker, status_text = "✓", "SUCCESS"
+                status_key = "SUCCESS"
             elif lcs == "TERMINATED" and rs in ("FAILED", "TIMEDOUT", "CANCELED"):
-                marker, status_text = "✗", rs
+                status_key = rs
             elif lcs == "RUNNING":
-                marker, status_text = "●", "RUNNING"
-            elif lcs == "PENDING":
-                marker, status_text = "○", "PENDING"
+                status_key = "RUNNING"
             elif lcs == "SKIPPED":
-                marker, status_text = "—", "SKIPPED"
+                status_key = "SKIPPED"
             else:
-                marker, status_text = "○", lcs
+                status_key = "PENDING"
 
             if t.get("start_time"):
                 start_ms = t["start_time"]
@@ -821,12 +933,10 @@ def _render_home_running():
                              if t_secs >= 60 else f"{t_secs}s")
             else:
                 t_elapsed = "—"
-            rows.append(
-                f"`{marker}` &nbsp; **{tk}** &nbsp;·&nbsp; "
-                f"{status_text} &nbsp;·&nbsp; {t_elapsed}"
-            )
 
-        body.markdown("\n\n".join(rows))
+            cards.append(_task_card_html(tk, status_key, t_elapsed))
+
+        body.markdown("".join(cards), unsafe_allow_html=True)
 
         lcs_overall = poll["life_cycle_state"]
         if lcs_overall == "TERMINATED":
