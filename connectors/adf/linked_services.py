@@ -163,15 +163,17 @@ class DeltaBackend:
 
     # --- export-side reads -------------------------------------------------
 
-    def lookup_distinct_workbooks(self, table: str) -> list[dict[str, Any]]:
-        """Return [{'workbook': 'X.xlsx'}, ...] from the gold fact table."""
+    def lookup_distinct_workbooks(
+        self, table: str, session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return [{'workbook': 'X.xlsx'}, ...] from the gold fact table.
+        When ``session_id`` is provided, restrict to that session."""
         if self.is_databricks():
+            df = self.spark.table(f"{self.catalog}.{table}")
+            if session_id:
+                df = df.where(f"session_id = '{session_id}'")
             rows = (
-                self.spark.table(f"{self.catalog}.{table}")
-                .select("workbook")
-                .distinct()
-                .orderBy("workbook")
-                .collect()
+                df.select("workbook").distinct().orderBy("workbook").collect()
             )
             return [{"workbook": r.workbook} for r in rows]
 
@@ -183,8 +185,11 @@ class DeltaBackend:
                     seen.append(row["workbook"])
         return [{"workbook": w} for w in sorted(seen)]
 
-    def fetch_for_workbook(self, table: str, workbook: str) -> tuple[list[str], list[list[Any]]]:
+    def fetch_for_workbook(
+        self, table: str, workbook: str, session_id: str | None = None,
+    ) -> tuple[list[str], list[list[Any]]]:
         """Return (headers, rows) for ``table`` filtered to ``workbook``.
+        When ``session_id`` is provided, also restrict to that session.
 
         ``table`` is in the form 'gold.fact_observation' / 'silver.dq_issues'.
         """
@@ -193,6 +198,8 @@ class DeltaBackend:
                 self.spark.table(f"{self.catalog}.{table}")
                 .where(f"workbook = '{workbook}'")
             )
+            if session_id and "session_id" in df.columns:
+                df = df.where(f"session_id = '{session_id}'")
             if "row_seq" in df.columns:
                 df = df.orderBy("sheet" if "sheet" in df.columns else "row_seq", "row_seq")
             pdf = df.toPandas()
