@@ -694,10 +694,6 @@ def _render_home_staged():
         "the medallion job, or **Discard session** to clean up and start over."
     )
 
-    with st.expander(f"Files in this session ({n})", expanded=False):
-        for fn in files:
-            st.markdown(f"- `{fn}`")
-
     c1, c2 = st.columns([3, 1])
     with c1:
         if st.button("Run pipeline", type="primary",
@@ -724,6 +720,42 @@ def _render_home_staged():
                 st.session_state.pop(k, None)
             st.session_state.stage = "empty"
             st.rerun()
+
+    st.markdown("&nbsp;")
+    st.markdown("### Input file preview")
+    st.caption(
+        "Inspect any of the generated workbooks before triggering the pipeline. "
+        "Same Excel-shaped renderer as the Deliverables tab."
+    )
+
+    # Files are still cached locally under /tmp/qde_session/<sid>/ from the
+    # Generate step. Cheap reads, no Volume round-trip.
+    local_dir = Path("/tmp/qde_session") / sid
+    if not files:
+        st.info("No files in this session.")
+        return
+
+    file_choice = st.selectbox(
+        "File", files, key="staged_file_pick",
+        help="Pick which input workbook to preview.",
+    )
+    target = local_dir / file_choice
+    if not target.exists():
+        st.warning(
+            f"`{file_choice}` is not in /tmp on this app container "
+            "(probably restarted since Generate). Run pipeline still works — "
+            "the file is in the input volume."
+        )
+        return
+    try:
+        sheets = _list_sheets(target)
+        sheet_choice = st.selectbox(
+            "Sheet", sheets, key="staged_sheet_pick",
+            help="Pick which sheet of the chosen workbook to render.",
+        )
+        _render_xlsx_full(target, sheet_choice, height=620)
+    except Exception as e:
+        st.warning(f"Preview unavailable: {e}")
 
 
 def _render_home_running():
