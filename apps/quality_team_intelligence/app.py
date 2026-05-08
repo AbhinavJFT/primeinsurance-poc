@@ -1156,7 +1156,6 @@ def _tab_ai_mapping(mp: pd.DataFrame):
               delta="low confidence", delta_color="off")
 
     st.markdown("&nbsp;")
-    st.caption("Showing only high-confidence matches (confidence ≥ 0.90).")
     view = visible[visible["confidence"] >= 0.9].copy()
     view = view.sort_values("confidence")
     view["confidence"] = view["confidence"].round(2)
