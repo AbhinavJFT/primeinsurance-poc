@@ -1250,7 +1250,7 @@ def _tab_analytics(obs: pd.DataFrame):
                 index="sample_date", columns="analyte_canonical",
                 values="value", aggfunc="mean",
             )
-            st.line_chart(pivot, height=300, color=ACCENT_GREEN)
+            st.line_chart(pivot, height=300)
         else:
             st.caption("No main-compound measurements in this batch.")
 
