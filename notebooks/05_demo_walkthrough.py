@@ -66,7 +66,7 @@ ORDER BY issue_count DESC
 display(spark.sql(f"""
 SELECT sheet, row_seq, column, rule, raw_value, repaired_value, note
 FROM {CATALOG}.silver.dq_issues
-WHERE severity = 'warning'
+WHERE severity = 'unparseable'
 LIMIT 20
 """))
 

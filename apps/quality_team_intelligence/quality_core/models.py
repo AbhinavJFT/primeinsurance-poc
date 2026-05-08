@@ -70,7 +70,7 @@ class DQIssue:
     row_seq: Optional[int]
     column: str
     rule: str           # e.g. "null_sentinel", "negative_value", "malformed_time"
-    severity: str       # "info" | "warning" | "error"
+    severity: str       # "repaired" | "unparseable" | "error"
     raw_value: Any
     repaired_value: Any
     note: str = ""

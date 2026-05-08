@@ -91,7 +91,7 @@ def _process_quality_sheet(ws, profile: SheetProfile, mappings: list[ColumnMappi
                 result.dq_issues.append(DQIssue(
                     workbook=workbook_name, sheet=profile.sheet_name,
                     row_seq=row_seq, column=mapping.canonical,
-                    rule=rule, severity="warning" if rule.startswith("malformed") else "info",
+                    rule=rule, severity="unparseable" if rule.startswith("malformed") else "repaired",
                     raw_value=raw, repaired_value=value,
                     note=f"raw label was {mapping.raw_label!r}",
                 ))
@@ -108,7 +108,7 @@ def _process_quality_sheet(ws, profile: SheetProfile, mappings: list[ColumnMappi
                     workbook=workbook_name, sheet=profile.sheet_name,
                     row_seq=row_seq, column=imp.raw_label,
                     rule=rule,
-                    severity="warning" if rule in ("negative_value", "non_numeric") else "info",
+                    severity="unparseable" if rule in ("negative_value", "non_numeric") else "repaired",
                     raw_value=raw, repaired_value=value,
                     note=f"analyte={mapping.canonical}",
                 ))
@@ -165,7 +165,7 @@ def _process_misc_sheet(ws, profile: SheetProfile, mappings: list[ColumnMapping]
                 result.dq_issues.append(DQIssue(
                     workbook=workbook_name, sheet=profile.sheet_name,
                     row_seq=row["row_seq"], column=label, rule=rule,
-                    severity="info", raw_value=raw, repaired_value=cleaned,
+                    severity="repaired", raw_value=raw, repaired_value=cleaned,
                 ))
         if non_empty:
             result.misc_rows.append(row)

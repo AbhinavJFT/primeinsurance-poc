@@ -2,16 +2,16 @@
 
 Three top-level views via the sidebar:
 
-  🏠 Home      — upload an .xlsx (or generate the 3 demo files), preview,
-                  click Clean. Live-streaming progress, then a per-run
-                  results page with Cleaning / AI Mapping / Analytics /
-                  Outputs tabs (all scoped to the file just processed).
+  Home      — upload an .xlsx (or generate the 3 demo files), preview,
+              click Clean. Live-streaming progress, then a per-run
+              results page with Deliverables / DQ Audit / Column Resolution /
+              Compliance Metrics tabs (all scoped to the file just processed).
 
-  🕒 History   — every previous interactive run, newest first. Click any
-                  row to re-open that run's results.
+  History   — every previous interactive run, newest first. Click any
+              row to re-open that run's results.
 
-  📊 Dashboard — comprehensive analytics across both the interactive
-                  runs AND the batch pipeline's bronze/silver/gold tables.
+  Dashboard — comprehensive analytics across both the interactive
+              runs AND the batch pipeline's bronze/silver/gold tables.
 
 Each interactive run is persisted to /Volumes/<catalog>/bronze/<output>/
 _app_runs/<run_id>/ as a small directory of summary.json + parquet files
@@ -89,7 +89,6 @@ NEUTRAL = "#475569"
 
 st.set_page_config(
     page_title="Quality Team Intelligence",
-    page_icon="🧪",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -637,16 +636,16 @@ def _load_run(run_id: str) -> dict | None:
 def _sidebar():
     with st.sidebar:
         st.markdown(
-            "<div style='font-size:1.3rem;font-weight:700;'>🧪 Quality Team</div>"
+            "<div style='font-size:1.3rem;font-weight:700;'>Quality Team</div>"
             "<div style='font-size:1.0rem;font-weight:600;opacity:0.7;'>Intelligence</div>",
             unsafe_allow_html=True,
         )
         st.markdown("---")
 
         nav_items = [
-            ("🏠 Home", "home"),
-            ("🕒 History", "history"),
-            ("📊 Dashboard", "dashboard"),
+            ("Home", "home"),
+            ("History", "history"),
+            ("Dashboard", "dashboard"),
         ]
         for label, key in nav_items:
             if st.button(label, key=f"nav_{key}", use_container_width=True):
@@ -688,7 +687,7 @@ def _render_home_empty():
 
     with c1:
         with st.container(border=True):
-            st.markdown("### 📤 Upload an .xlsx")
+            st.markdown("### Upload an .xlsx")
             st.markdown(
                 "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
                 "Drag-and-drop or browse. Multi-tab Quality team workbooks expected."
@@ -704,12 +703,12 @@ def _render_home_empty():
                 st.session_state.available_files = [saved]
                 st.session_state.selected_file = saved
                 st.session_state.stage = "files_loaded"
-                st.toast(f"Loaded {saved.name}", icon="✅")
+                st.toast(f"Loaded {saved.name}")
                 st.rerun()
 
     with c2:
         with st.container(border=True):
-            st.markdown("### 🎲 Generate demo files")
+            st.markdown("### Generate demo files")
             st.markdown(
                 "<div style='opacity:0.65;font-size:0.9rem;margin-bottom:0.6rem;'>"
                 "Produces three synthetic workbooks (API, KSM, Intermediates) shaped "
@@ -724,7 +723,7 @@ def _render_home_empty():
                 st.session_state.available_files = files
                 st.session_state.selected_file = files[0] if files else None
                 st.session_state.stage = "files_loaded"
-                st.toast(f"Generated {len(files)} workbooks", icon="🎲")
+                st.toast(f"Generated {len(files)} workbooks")
                 st.rerun()
 
 
@@ -755,7 +754,7 @@ def _render_home_files_loaded():
         cur_file = st.session_state.selected_file
         if cur_file and cur_file.exists():
             st.download_button(
-                label="⬇️ Download",
+                label="Download",
                 data=cur_file.read_bytes(),
                 file_name=cur_file.name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -822,7 +821,7 @@ def _render_home_files_loaded():
         )
     with cta_r:
         if st.button(
-            "▶ Clean and Transform", type="primary",
+            "Clean and Transform", type="primary",
             use_container_width=True, key="clean_btn",
         ):
             st.session_state.stage = "processing"
@@ -843,7 +842,7 @@ def _render_home_processing():
 
     with st.status(f"Processing **{f.name}**", expanded=True) as status:
         # 1. Read
-        st.write("📖 Reading workbook…")
+        st.write("Reading workbook…")
         try:
             wb = load_workbook(f, read_only=True, data_only=True)
             sheet_count = len(wb.sheetnames)
@@ -852,11 +851,11 @@ def _render_home_processing():
             status.update(label=f"Failed: {e}", state="error")
             st.session_state.stage = "files_loaded"
             return
-        st.write(f"  ✓ {sheet_count} sheet(s) detected")
+        st.write(f"  - {sheet_count} sheet(s) detected")
         time.sleep(0.3)
 
         # 2. Pipeline
-        st.write("🔍 Inferring schema · 🤖 AI-mapping columns · 🧹 Cleaning values…")
+        st.write("Inferring schema · AI-mapping columns · Cleaning values…")
         try:
             result = process_workbook(f)
         except Exception as e:
@@ -866,18 +865,18 @@ def _render_home_processing():
         n_obs = len(result.observations)
         n_dq = len(result.dq_issues)
         n_map = len(result.mappings)
-        st.write(f"  ✓ Cleaned **{n_obs:,}** observations across "
+        st.write(f"  - Cleaned **{n_obs:,}** observations across "
                  f"**{sheet_count}** sheets")
-        st.write(f"  ✓ Logged **{n_dq:,}** DQ fixes with full audit trail")
-        st.write(f"  ✓ Recorded **{n_map:,}** AI-mapping decisions")
+        st.write(f"  - Logged **{n_dq:,}** DQ fixes with full audit trail")
+        st.write(f"  - Recorded **{n_map:,}** AI-mapping decisions")
         time.sleep(0.3)
 
         # 3. Outputs
-        st.write("📦 Building outputs…")
+        st.write("Building outputs…")
         with tempfile_dir() as tmp:
             tidy_path = Path(tmp) / f"{f.stem}_tidy.xlsx"
             write_tidy_workbook(result, tidy_path)
-            st.write(f"  ✓ Tidy long-form xlsx ({tidy_path.stat().st_size:,} bytes)")
+            st.write(f"  - Tidy long-form xlsx ({tidy_path.stat().st_size:,} bytes)")
 
             obs_df = _serialize_observations(result.observations)
             map_df = _serialize_mappings(result.mappings)
@@ -895,14 +894,14 @@ def _render_home_processing():
                 map_rows=map_rows,
                 output_path=same_path,
             )
-            st.write(f"  ✓ Same-format xlsx ({same_path.stat().st_size:,} bytes)")
+            st.write(f"  - Same-format xlsx ({same_path.stat().st_size:,} bytes)")
 
             # 4. Persist
-            st.write("💾 Persisting run…")
+            st.write("Persisting run…")
             duration = time.time() - started
             run_dir = _save_run(run_id, f, result, tidy_path, same_path, duration)
 
-        st.write(f"  ✓ Saved to `{run_dir}`")
+        st.write(f"  - Saved to `{run_dir}`")
         status.update(
             label=f"Cleaned · {n_obs:,} obs · {n_dq:,} fixes · "
                   f"{round(time.time()-started, 1)}s",
@@ -991,29 +990,29 @@ def _render_run_results(run_id: str):
     with a1:
         st.caption(
             "Everything below is **scoped to this run only**. "
-            "Past runs live in 🕒 History; aggregates in 📊 Dashboard."
+            "Past runs live in History; aggregates in Dashboard."
         )
     with a2:
-        if st.button("← Run another", use_container_width=True, key="run_another"):
+        if st.button("Run another", use_container_width=True, key="run_another"):
             st.session_state.stage = "empty"
             st.session_state.available_files = []
             st.session_state.selected_file = None
             st.session_state.current_run_id = None
             st.rerun()
 
-    # Tabs
-    tab_clean, tab_ai, tab_analytics, tab_outputs = st.tabs([
-        "🧹 Cleaning", "🤖 AI Mapping", "📊 Analytics", "📤 Outputs",
+    # Tabs — order: Deliverables, DQ Audit, Column Resolution, Compliance Metrics
+    tab_outputs, tab_clean, tab_ai, tab_analytics = st.tabs([
+        "Deliverables", "DQ Audit", "Column Resolution", "Compliance Metrics",
     ])
 
+    with tab_outputs:
+        _tab_outputs(run["dir"])
     with tab_clean:
         _tab_cleaning(dq)
     with tab_ai:
         _tab_ai_mapping(mp)
     with tab_analytics:
         _tab_analytics(obs)
-    with tab_outputs:
-        _tab_outputs(run["dir"])
 
 
 def _tab_cleaning(dq: pd.DataFrame):
@@ -1074,9 +1073,8 @@ def _tab_ai_mapping(mp: pd.DataFrame):
               delta="confidence < 0.5", delta_color="off")
 
     st.markdown("&nbsp;")
-    min_conf = st.slider("Show mappings with confidence ≥",
-                         0.0, 1.0, 0.0, step=0.05, key="ai_conf")
-    view = visible[visible["confidence"] >= min_conf].copy()
+    st.caption("Showing only high-confidence mappings (confidence ≥ 0.90).")
+    view = visible[visible["confidence"] >= 0.9].copy()
     view = view.sort_values("confidence")
     view["confidence"] = view["confidence"].round(2)
     st.dataframe(
@@ -1140,7 +1138,7 @@ def _tab_analytics(obs: pd.DataFrame):
             st.dataframe(violations, use_container_width=True,
                          hide_index=True, height=320)
     else:
-        st.success("Zero spec violations in this run 🎉")
+        st.success("Zero spec violations in this run.")
 
     st.markdown("&nbsp;")
 
@@ -1167,8 +1165,8 @@ def _tab_outputs(run_dir: Path):
     tidy_path = run_dir / "tidy.xlsx"
 
     sub_same, sub_tidy = st.tabs([
-        "📑 Same-format (mirrors input)",
-        "📋 Tidy long-form (analytics)",
+        "Same-format (mirrors input)",
+        "Tidy long-form (analytics)",
     ])
 
     # ---- Same-format ----
@@ -1188,7 +1186,7 @@ def _tab_outputs(run_dir: Path):
                             unsafe_allow_html=True)
             with top_r:
                 st.download_button(
-                    "⬇ Download", data=same_path.read_bytes(),
+                    "Download", data=same_path.read_bytes(),
                     file_name=same_path.name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True, key="dl_same", type="primary",
@@ -1217,7 +1215,7 @@ def _tab_outputs(run_dir: Path):
                             unsafe_allow_html=True)
             with top_r:
                 st.download_button(
-                    "⬇ Download", data=tidy_path.read_bytes(),
+                    "Download", data=tidy_path.read_bytes(),
                     file_name=tidy_path.name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True, key="dl_tidy", type="primary",
@@ -1262,7 +1260,7 @@ def render_history():
 
     runs = _list_runs()
     if not runs:
-        st.info("No runs yet. Head to 🏠 Home and process a workbook.")
+        st.info("No runs yet. Head to Home and process a workbook.")
         return
 
     # Build a display dataframe
