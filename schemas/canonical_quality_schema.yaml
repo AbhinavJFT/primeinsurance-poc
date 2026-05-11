@@ -45,8 +45,18 @@ synonyms:
 analytes:
   Impurity_1:         ["impurity-1", "impurity 1", "imp-1", "imp 1"]
   Impurity_2:         ["impurity-2", "impurity 2", "imp-2"]
+  Impurity_3:         ["impurity-3", "impurity 3", "imp-3"]
   Impurity_generic:   ["impurity"]
   TFMBA:              ["tfmba"]
   TFMBA_Acid:         ["tfmba acid", "tfmba-acid"]
   Chloro_Benzamide_2: ["2-chloro benzamide", "2 chloro benzamide", "2-chlorobenzamide"]
   Chloro_TFMBA_5:     ["5-chloro tfmba", "5 chloro tfmba", "5-chlorotfmba"]
+  # KSM impurities (single-letter suffixes)
+  Imp_A:              ["imp-a", "imp a", "impurity a"]
+  Imp_B:              ["imp-b", "imp b", "impurity b"]
+  Imp_D:              ["imp-d", "imp d", "impurity d"]
+  Imp_E:              ["imp-e", "imp e", "impurity e"]
+  # Min-bound assay / main-compound analytes (per workbook type)
+  KSM_Assay:          ["ksm assay", "ksm-assay", "ksm purity"]
+  Main_Compound:      ["main compound", "main-compound", "main cmpd", "assay"]
+  Unknown_RRT_17:     ["unknown-rrt-1.7", "unknown rrt 1.7", "unknown rrt-1.7"]
